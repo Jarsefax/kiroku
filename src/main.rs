@@ -2,10 +2,15 @@ use clap::Parser;
 
 #[derive(Parser)]
 struct Cli {
-    name: String,
+    name: Option<String>,
 }
 
 fn main() {
     let args = Cli::parse();
-    println!("name: {:?}", args.name);
+
+    if let Some(name) = args.name {
+        println!("name: {:?}", name);
+    } else {
+        println!("interactive mode");
+    }
 }
