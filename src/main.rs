@@ -3,6 +3,8 @@ use color_eyre::eyre::OptionExt;
 use directories::ProjectDirs;
 use ratatui::{DefaultTerminal, Frame};
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 
 #[derive(Parser)]
 struct Cli {
@@ -31,8 +33,16 @@ fn main() -> color_eyre::Result<()> {
         // todo: different "files"
         let file_path = data_dir.join("default");
         println!("file: {:?}", file_path);
-        fs::write(&file_path, text)?;
 
+        let mut file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(file_path)
+            .expect("Failed to open the file");
+
+        let ln = format!("{}\n", text);
+        file.write_all(ln.as_bytes())
+            .expect("Failed to append to the file");
         Ok(())
     } else {
         ratatui::run(app)?;
