@@ -1,38 +1,32 @@
+mod storage;
+
 use clap::Parser;
-use color_eyre::eyre::OptionExt;
-use directories::ProjectDirs;
+use color_eyre::Result;
 use ratatui::{DefaultTerminal, Frame};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 
 #[derive(Parser)]
+#[clap(author, version, about)]
 struct Cli {
+    /// Text att lägga till
     text: Option<String>,
 }
 
-fn main() -> color_eyre::Result<()> {
+fn main() -> Result<()> {
     color_eyre::install()?;
 
     let args = Cli::parse();
 
     if let Some(text) = args.text {
-        const QUALIFIER: &str = "io.github.jarsefax.kiroku";
-        const ORGANIZATION: &str = "jarsefax";
-        const APPLICATION: &str = "Kiroku";
-        const PROJECT_DIRECTORIES_ERROR_MESSAGE: &str = "could not find storage directory";
-        let proj_dirs =
-            ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
-                .ok_or_eyre(PROJECT_DIRECTORIES_ERROR_MESSAGE)?;
-        let data_dir = proj_dirs.data_dir();
-        println!("dir: {:?}", data_dir);
+        let data_dir = storage::get_data_dir()?;
 
         // todo: ask/conf if create or not
-        fs::create_dir_all(data_dir)?;
+        fs::create_dir_all(&data_dir)?;
 
         // todo: different "files"
         let file_path = data_dir.join("default");
-        println!("file: {:?}", file_path);
 
         let mut file = OpenOptions::new()
             .append(true)
@@ -54,7 +48,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     loop {
         terminal.draw(render)?;
         if crossterm::event::read()?.is_key_press() {
-            break Ok(())
+            break Ok(());
         }
     }
 }
