@@ -14,3 +14,5 @@ pub fn get_data_dir() -> Result<PathBuf> {
 
     Ok(data_dir)
 }
+
+// pub fn append_to_file()

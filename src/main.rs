@@ -1,46 +1,56 @@
+mod append;
 mod storage;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use color_eyre::Result;
 use ratatui::{DefaultTerminal, Frame};
-use std::fs;
-use std::fs::OpenOptions;
-use std::io::Write;
 
 #[derive(Parser)]
-#[clap(author, version, about)]
+#[command(author, version, about)]
 struct Cli {
-    /// Text att lägga till
+    /// Text to add
     text: Option<String>,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Appends text to file
+    Append {
+        ///Text to append
+        text: String,
+    },
 }
 
 fn main() -> Result<()> {
     color_eyre::install()?;
 
     let args = Cli::parse();
-
-    if let Some(text) = args.text {
-        let data_dir = storage::get_data_dir()?;
-
-        // todo: ask/conf if create or not
-        fs::create_dir_all(&data_dir)?;
-
-        // todo: different "files"
-        let file_path = data_dir.join("default");
-
-        let mut file = OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(file_path)
-            .expect("Failed to open the file");
-
-        let ln = format!("{}\n", text);
-        file.write_all(ln.as_bytes())
-            .expect("Failed to append to the file");
+    if handle_args(args)? {
         Ok(())
     } else {
         ratatui::run(app)?;
         Ok(())
+    }
+}
+
+fn handle_args(args: Cli) -> Result<bool> {
+    if let Some(text) = args.text {
+        append::execute(text)?;
+        Ok(true)
+    } else if let Some(command) = args.command {
+        handle_command(command)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+fn handle_command(command: Commands) -> Result<()> {
+    match command {
+        Commands::Append { text } => append::execute(text),
     }
 }
 
