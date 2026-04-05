@@ -18,15 +18,16 @@ pub fn get_data_dir_path_buf() -> Result<PathBuf> {
     Ok(data_dir.to_path_buf())
 }
 
-pub fn create_data_dir(data_dir: &PathBuf) -> Result<()> {
-    fs::create_dir_all(&data_dir)?;
-    Ok(())
+pub fn get_data_file_path_buf() -> Result<PathBuf> {
+    let data_dir = get_data_dir_path_buf()?;
+    let file_path = data_dir.join("default");
+    Ok(file_path.to_path_buf())
 }
 
 pub fn append_to_data_file(text: String) -> Result<()> {
     let data_dir = get_data_dir_path_buf()?;
 
-    // // todo: ask/conf if create or not
+    // todo: ask/conf if create or not
     create_data_dir(&data_dir)?;
 
     // todo: different "files"
@@ -39,5 +40,10 @@ pub fn append_to_data_file(text: String) -> Result<()> {
 
     let ln = format!("{}\n", text);
     file.write_all(ln.as_bytes())?;
+    Ok(())
+}
+
+fn create_data_dir(data_dir: &PathBuf) -> Result<()> {
+    fs::create_dir_all(&data_dir)?;
     Ok(())
 }

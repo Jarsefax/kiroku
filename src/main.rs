@@ -23,7 +23,16 @@ enum Commands {
         ///Text to append
         text: String,
     },
-    Config {},
+    Config {
+        #[command(subcommand)]
+        level: Option<ConfigLevels>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ConfigLevels {
+    Directory,
+    File,
 }
 
 fn main() -> Result<()> {
@@ -53,8 +62,8 @@ fn handle_args(args: Cli) -> Result<bool> {
 fn handle_command(command: Commands) -> Result<()> {
     match command {
         Commands::Append { text } => append::execute(text),
-        Commands::Config {} => {
-            let res = config::execute()?;
+        Commands::Config { level } => {
+            let res = config::execute(level)?;
             println!("{}", res);
             return Ok(());
         }
