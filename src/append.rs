@@ -5,7 +5,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 pub fn execute(text: String) -> Result<()> {
-    let data_dir = storage::get_data_dir()?;
+    let data_dir = storage::get_data_dir_path_buf()?;
 
     // todo: ask/conf if create or not
     fs::create_dir_all(&data_dir)?;

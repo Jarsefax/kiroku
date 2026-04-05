@@ -1,4 +1,5 @@
 mod append;
+mod config;
 mod storage;
 
 use clap::{Parser, Subcommand};
@@ -22,6 +23,7 @@ enum Commands {
         ///Text to append
         text: String,
     },
+    Config {},
 }
 
 fn main() -> Result<()> {
@@ -51,6 +53,11 @@ fn handle_args(args: Cli) -> Result<bool> {
 fn handle_command(command: Commands) -> Result<()> {
     match command {
         Commands::Append { text } => append::execute(text),
+        Commands::Config {} => {
+            let res = config::execute()?;
+            println!("{}", res);
+            return Ok(());
+        }
     }
 }
 
