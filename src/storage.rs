@@ -1,6 +1,8 @@
 use color_eyre::{eyre::OptionExt, eyre::Result};
 use directories::ProjectDirs;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::PathBuf;
 
 const QUALIFIER: &str = "io.github.jarsefax.kiroku";
@@ -17,10 +19,25 @@ pub fn get_data_dir_path_buf() -> Result<PathBuf> {
 }
 
 pub fn create_data_dir(data_dir: &PathBuf) -> Result<()> {
-    // let data_dir = get_data_dir_path_buf()?;
-
-    // todo: ask/conf if create or not
     fs::create_dir_all(&data_dir)?;
+    Ok(())
+}
 
+pub fn append_to_data_file(text: String) -> Result<()> {
+    let data_dir = get_data_dir_path_buf()?;
+
+    // // todo: ask/conf if create or not
+    create_data_dir(&data_dir)?;
+
+    // todo: different "files"
+    let file_path = data_dir.join("default");
+
+    let mut file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(file_path)?;
+
+    let ln = format!("{}\n", text);
+    file.write_all(ln.as_bytes())?;
     Ok(())
 }
