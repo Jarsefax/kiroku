@@ -1,14 +1,13 @@
 use crate::storage;
 use color_eyre::eyre::Result;
-use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 
 pub fn execute(text: String) -> Result<()> {
     let data_dir = storage::get_data_dir_path_buf()?;
 
-    // todo: ask/conf if create or not
-    fs::create_dir_all(&data_dir)?;
+    // // todo: ask/conf if create or not
+    storage::create_data_dir(&data_dir)?;
 
     // todo: different "files"
     let file_path = data_dir.join("default");
