@@ -1,38 +1,12 @@
 mod append;
+mod command;
 mod config;
 mod storage;
 
-use clap::{Parser, Subcommand};
+use crate::command::{Cli, Commands};
+use clap::Parser;
 use color_eyre::Result;
 use ratatui::{DefaultTerminal, Frame};
-
-#[derive(Parser)]
-#[command(author, version, about)]
-struct Cli {
-    /// Text to add
-    text: Option<String>,
-
-    #[command(subcommand)]
-    command: Option<Commands>,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Appends text to file
-    Append {
-        ///Text to append
-        text: String,
-    },
-    Config {
-        /// Display data file path
-        #[arg(short, long)]
-        file: bool,
-
-        /// Display data directory path
-        #[arg(short, long)]
-        directory: bool,
-    },
-}
 
 fn main() -> Result<()> {
     color_eyre::install()?;
