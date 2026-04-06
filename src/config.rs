@@ -1,15 +1,15 @@
-use crate::{ConfigLevels, storage};
+use crate::storage;
 use color_eyre::eyre::Result;
 
-pub fn execute(level: Option<ConfigLevels>) -> Result<String> {
-    let mut l = ConfigLevels::File;
-    if let Some(input) = level {
-        l = input;
+pub fn execute(file: bool, directory: bool) -> Result<String> {
+    let mut include_file = file;
+    if file == false && directory == false {
+        include_file = true;
     }
 
-    let res = match l {
-        ConfigLevels::Directory => storage::get_data_dir_path_buf()?,
-        ConfigLevels::File => storage::get_data_file_path_buf()?,
+    let res = match include_file {
+        false => storage::get_data_dir_path_buf()?,
+        true => storage::get_data_file_path_buf()?,
     };
     Ok(res.to_string_lossy().into_owned())
 }
