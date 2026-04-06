@@ -1,9 +1,10 @@
 mod append;
 mod command;
 mod config;
+mod list;
 mod storage;
 
-use crate::command::{Cli, Commands};
+use crate::command::{Cli, handle_command};
 use clap::Parser;
 use color_eyre::Result;
 use ratatui::{DefaultTerminal, Frame};
@@ -29,17 +30,6 @@ fn handle_args(args: Cli) -> Result<bool> {
         Ok(true)
     } else {
         Ok(false)
-    }
-}
-
-fn handle_command(command: Commands) -> Result<()> {
-    match command {
-        Commands::Append { text } => append::execute(text),
-        Commands::Config { file, directory } => {
-            let res = config::execute(file, directory)?;
-            println!("{}", res);
-            return Ok(());
-        }
     }
 }
 
