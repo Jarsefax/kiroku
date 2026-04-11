@@ -4,7 +4,7 @@ mod config;
 mod list;
 mod storage;
 
-use crate::command::{Cli, handle_command};
+use crate::command::{Cli, ItemCategory, handle_command};
 use clap::Parser;
 use color_eyre::Result;
 use ratatui::{DefaultTerminal, Frame};
@@ -23,7 +23,7 @@ fn main() -> Result<()> {
 
 fn handle_args(args: Cli) -> Result<bool> {
     if let Some(text) = args.text {
-        append::execute(text)?;
+        append::execute(Some(ItemCategory::Doing), text)?;
         Ok(true)
     } else if let Some(command) = args.command {
         handle_command(command)?;
