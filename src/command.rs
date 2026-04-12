@@ -15,31 +15,14 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Appends text to file
-    #[command(visible_alias = "a")]
-    Append {
-        /// Category to append to (default is ´doing´)
-        #[arg(short, long, value_enum)]
-        category: Option<ItemCategory>,
-
-        ///Text to append
-        text: String,
-    },
+    Append(append::Cmd),
 
     /// Lists content of file
     #[command(visible_aliases = ["l", "ls"])]
     List {},
 
     /// Show and set configuration
-    #[command(visible_aliases = ["c", "cfg"])]
-    Config {
-        /// Display data file path
-        #[arg(short, long)]
-        file: bool,
-
-        /// Display data directory path
-        #[arg(short, long)]
-        directory: bool,
-    },
+    Config(config::Cmd),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -59,14 +42,14 @@ pub enum ItemCategory {
 
 pub fn handle_command(command: Commands) -> Result<()> {
     match command {
-        Commands::Append { category, text } => append::execute(category, text),
+        Commands::Append(cmd) => append::execute(cmd.category, cmd.text),
         Commands::List {} => {
             let res = list::execute()?;
             println!("{}", res);
             return Ok(());
         }
-        Commands::Config { file, directory } => {
-            let res = config::execute(file, directory)?;
+        Commands::Config(cmd) => {
+            let res = config::execute(cmd)?;
             println!("{}", res);
             return Ok(());
         }

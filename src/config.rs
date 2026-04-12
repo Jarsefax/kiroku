@@ -1,9 +1,22 @@
 use crate::storage;
+use clap::Parser;
 use color_eyre::eyre::Result;
 
-pub fn execute(file: bool, directory: bool) -> Result<String> {
-    let mut include_file = file;
-    if file == false && directory == false {
+#[derive(Parser)]
+#[command(visible_aliases = ["c", "cfg"])]
+pub struct Cmd {
+    /// Display data file path
+    #[arg(short, long)]
+    file: bool,
+
+    /// Display data directory path
+    #[arg(short, long)]
+    directory: bool,
+}
+
+pub fn execute(cmd: Cmd) -> Result<String> {
+    let mut include_file = cmd.file;
+    if cmd.file == false && cmd.directory == false {
         include_file = true;
     }
 
