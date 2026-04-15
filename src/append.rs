@@ -6,7 +6,7 @@ use color_eyre::eyre::Result;
 #[command(visible_alias = "a")]
 pub struct Cmd {
     /// Category to append to (default is ´doing´)
-    #[arg(short, long, value_enum)]
+    #[arg(short, long, visible_alias = "cat", value_enum)]
     pub category: Option<ItemCategory>,
 
     ///Text to append

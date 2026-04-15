@@ -10,7 +10,7 @@ pub struct Cmd {
     file: bool,
 
     /// Display data directory path
-    #[arg(short, long)]
+    #[arg(short, long, visible_alias = "dir")]
     directory: bool,
 }
 

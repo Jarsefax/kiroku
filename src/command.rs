@@ -28,15 +28,15 @@ pub enum Commands {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 pub enum ItemCategory {
     /// Task to do
-    #[value(alias = "t")]
+    #[value(aliases = ["t", "td"])]
     Todo,
 
     /// Task being worked on
-    #[value(alias = "d")]
+    #[value(aliases = ["d", "do"])]
     Doing,
 
     /// Completed task
-    #[value(alias = "c")]
+    #[value(aliases = ["c", "done"])]
     Completed,
 }
 
