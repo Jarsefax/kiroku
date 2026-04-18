@@ -735,6 +735,7 @@ dependencies = [
  "crossterm",
  "directories",
  "ratatui",
+ "rev_lines",
 ]
 
 [[package]]
@@ -1292,6 +1293,15 @@ name = "regex-syntax"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a96887878f22d7bad8a3b6dc5b7440e0ada9a245242924394987b21cf2210a4c"
+
+[[package]]
+name = "rev_lines"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed62916ac7a5ccbf13fa5e1d303029ff015600fee841756dfc134a1ac62bf05f"
+dependencies = [
+ "thiserror 1.0.69",
+]
 
 [[package]]
 name = "rustc-demangle"
