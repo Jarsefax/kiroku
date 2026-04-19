@@ -18,8 +18,7 @@ pub enum Commands {
     Append(append::Cmd),
 
     /// Lists content of file
-    #[command(visible_aliases = ["l", "ls"])]
-    List {},
+    List(list::Cmd),
 
     /// Show and set configuration
     Config(config::Cmd),
@@ -43,8 +42,8 @@ pub enum ItemCategory {
 pub fn handle_command(command: Commands) -> Result<()> {
     match command {
         Commands::Append(cmd) => append::execute(cmd.category, cmd.text),
-        Commands::List {} => {
-            let res = list::execute()?;
+        Commands::List(cmd) => {
+            let res = list::execute(cmd)?;
             println!("{}", res);
             return Ok(());
         }
