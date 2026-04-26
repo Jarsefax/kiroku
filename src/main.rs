@@ -3,6 +3,7 @@ mod command;
 mod config;
 mod list;
 mod storage;
+mod time;
 
 use crate::command::{Cli, ItemCategory, handle_command};
 use clap::Parser;

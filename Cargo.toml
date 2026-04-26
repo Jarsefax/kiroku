@@ -15,4 +15,5 @@ ratatui = "0.30.0"
 #anyhow = "1.0.101"
 directories = "6.0.0"
 rev_lines = "0.3.0"
+chrono = "0.4.44"
 #serde = { version = "1.0.228", features = ["derive"] }

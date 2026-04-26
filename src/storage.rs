@@ -1,6 +1,8 @@
 use color_eyre::{eyre::OptionExt, eyre::Result};
 use directories::ProjectDirs;
+use rev_lines::RevLines;
 use std::fs;
+use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
@@ -46,4 +48,11 @@ pub fn append_to_data_file(text: String) -> Result<()> {
 fn create_data_dir(data_dir: &PathBuf) -> Result<()> {
     fs::create_dir_all(&data_dir)?;
     Ok(())
+}
+
+pub fn get_reverse_lines() -> Result<RevLines<File>> {
+    let path = get_data_file_path_buf()?;
+
+    let file = File::open(path)?;
+    Ok(RevLines::new(file))
 }
