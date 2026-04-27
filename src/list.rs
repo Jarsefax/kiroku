@@ -92,30 +92,19 @@ pub fn execute(cmd: Cmd) -> Result<String> {
 }
 
 fn list_last_day() -> Result<String> {
-    let rev_lines = storage::get_reverse_lines()?;
-
-    let mut traversed_lines = Vec::new();
-    for rev_line in rev_lines {
-        if let Ok(line) = rev_line {
-            let matched = line.starts_with('-');
-            traversed_lines.push(line);
-            if matched {
-                break;
-            }
-        }
-    }
+    let (mut traversed_lines, _) = get_last_day()?;
     traversed_lines.push("Listing last day...\n".to_string());
     
     traversed_lines.reverse();
     Ok(traversed_lines.join("\n"))
 }
 
-fn list_today() -> Result<String> {
-    let today = time::todays_date();
+fn get_last_day() -> Result<(Vec<String>, Option<String>)> {
+    let mut last_date: Option<String> = None;
+    
     let rev_lines = storage::get_reverse_lines()?;
 
     let mut traversed_lines = Vec::new();
-    let mut last_date: Option<String> = None;
     for rev_line in rev_lines {
         if let Ok(line) = rev_line {
             let matched = line.starts_with('-');
@@ -123,23 +112,30 @@ fn list_today() -> Result<String> {
                 let date = line.trim_start_matches("- ");
                 let xxx = date.to_string();
                 last_date = Some(xxx);
-                traversed_lines.push(date.to_string());
+                
+                traversed_lines.push(line);
+                break;
             } else {
                 traversed_lines.push(line);
             }
-            if matched {
-                break;
-            }
         }
     }
+    
+    Ok((traversed_lines, last_date))
+}
 
+fn list_today() -> Result<String> {
+    let today = time::todays_date();
+    let (mut traversed_lines, last_date) = get_last_day()?;
+
+    if let Some(x) = last_date
+        && x != today 
+    {
+        traversed_lines.push("(No registrations today)\n".to_string());
+    }    
     traversed_lines.push("Listing today...\n".to_string());
 
     traversed_lines.reverse();
-    if let Some(x) = last_date
-        && x != today
-    {}
-
     Ok(traversed_lines.join("\n"))
 }
 

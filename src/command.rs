@@ -17,7 +17,7 @@ pub enum Commands {
     /// Appends text to file
     Append(append::Cmd),
 
-    /// Lists content of file
+    /// Lists content of file, default behaviour is listing last recorded day
     List(list::Cmd),
 
     /// Show and set configuration
