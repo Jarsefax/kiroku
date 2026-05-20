@@ -16,7 +16,7 @@ pub struct Cmd {
 
 pub fn execute(cmd: Cmd) -> Result<String> {
     let mut include_file = cmd.file;
-    if cmd.file == false && cmd.directory == false {
+    if !cmd.file && !cmd.directory {
         include_file = true;
     }
 

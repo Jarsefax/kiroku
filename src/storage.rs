@@ -46,7 +46,7 @@ pub fn append_to_data_file(text: String) -> Result<()> {
 }
 
 fn create_data_dir(data_dir: &PathBuf) -> Result<()> {
-    fs::create_dir_all(&data_dir)?;
+    fs::create_dir_all(data_dir)?;
     Ok(())
 }
 

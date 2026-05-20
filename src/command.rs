@@ -45,12 +45,12 @@ pub fn handle_command(command: Commands) -> Result<()> {
         Commands::List(cmd) => {
             let res = list::execute(cmd)?;
             println!("{}", res);
-            return Ok(());
+            Ok(())
         }
         Commands::Config(cmd) => {
             let res = config::execute(cmd)?;
             println!("{}", res);
-            return Ok(());
+            Ok(())
         }
     }
 }

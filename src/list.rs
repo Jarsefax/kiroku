@@ -1,4 +1,5 @@
 use crate::{storage, time};
+use chrono::NaiveDate;
 use clap::{Parser, ValueEnum};
 use color_eyre::eyre::Result;
 
@@ -70,7 +71,7 @@ pub fn execute(cmd: Cmd) -> Result<String> {
     if let Some(filter) = cmd.filter {
         match filter {
             Filter::Today => list_today(),
-            Filter::Yesterday => list_today(),
+            Filter::Yesterday => list_yesterday(),
             Filter::Week => list_today(),
             Filter::Month => list_today(),
             Filter::Year => list_today(),
@@ -94,33 +95,31 @@ pub fn execute(cmd: Cmd) -> Result<String> {
 fn list_last_day() -> Result<String> {
     let (mut traversed_lines, _) = get_last_day()?;
     traversed_lines.push("Listing last day...\n".to_string());
-    
+
     traversed_lines.reverse();
     Ok(traversed_lines.join("\n"))
 }
 
 fn get_last_day() -> Result<(Vec<String>, Option<String>)> {
     let mut last_date: Option<String> = None;
-    
+
     let rev_lines = storage::get_reverse_lines()?;
 
     let mut traversed_lines = Vec::new();
-    for rev_line in rev_lines {
-        if let Ok(line) = rev_line {
-            let matched = line.starts_with('-');
-            if matched {
-                let date = line.trim_start_matches("- ");
-                let xxx = date.to_string();
-                last_date = Some(xxx);
-                
-                traversed_lines.push(line);
-                break;
-            } else {
-                traversed_lines.push(line);
-            }
+    for line in rev_lines.flatten() {
+        let matched = line.starts_with('-');
+        if matched {
+            let date = line.trim_start_matches("- ");
+            let date_str = date.to_string();
+            last_date = Some(date_str);
+
+            traversed_lines.push(line);
+            break;
+        } else {
+            traversed_lines.push(line);
         }
     }
-    
+
     Ok((traversed_lines, last_date))
 }
 
@@ -128,15 +127,49 @@ fn list_today() -> Result<String> {
     let today = time::todays_date();
     let (mut traversed_lines, last_date) = get_last_day()?;
 
-    if let Some(x) = last_date
-        && x != today 
+    if let Some(date) = last_date
+        && date != today.to_string()
     {
         traversed_lines.push("(No registrations today)\n".to_string());
-    }    
+    }
     traversed_lines.push("Listing today...\n".to_string());
 
     traversed_lines.reverse();
     Ok(traversed_lines.join("\n"))
+}
+
+fn list_yesterday() -> Result<String> {
+    let today = time::todays_date();
+    let yesterday = time::yesterdays_date();
+    let rev_lines = storage::get_reverse_lines()?;
+
+    let mut found = false;
+    let mut traversed_lines = Vec::new();
+    for line in rev_lines.flatten() {
+        let matched = line.starts_with('-');
+        if matched {
+            let date_str = line.trim_start_matches("- ");
+            let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d");
+            if date == Ok(today) {
+                let today_str = today.format("%Y-%m-%d").to_string();
+                traversed_lines.push(today_str);
+            } else if date == Ok(yesterday) {
+                found = true;
+                let yesterday_str = yesterday.to_string();
+                traversed_lines.push(yesterday_str)
+            } else {
+                break;
+            }
+        } else {
+            traversed_lines.push(line);
+        }
+    }
+    if found {
+        traversed_lines.reverse();
+        Ok(traversed_lines.join("\n"))
+    } else {
+        Ok("Nothing recorded yesterday".to_string())
+    }
 }
 
 fn list_since(_: u32) -> Result<String> {
