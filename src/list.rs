@@ -156,7 +156,8 @@ fn list_yesterday() -> Result<String> {
             } else if date == Ok(yesterday) {
                 found = true;
                 let yesterday_str = yesterday.to_string();
-                traversed_lines.push(yesterday_str)
+                traversed_lines.push(yesterday_str);
+                break;
             } else {
                 break;
             }
