@@ -72,11 +72,11 @@ pub fn execute(cmd: Cmd) -> Result<String> {
         match filter {
             Filter::Today => list_today(),
             Filter::Yesterday => list_yesterday(),
-            Filter::Week => list_today(),
-            Filter::Month => list_today(),
-            Filter::Year => list_today(),
-            Filter::All => list_today(),
-            Filter::Since => list_today(),
+            Filter::Week => Ok("listing last week is not implemented yet".to_string()),
+            Filter::Month => Ok("listing last month is not implemented yet".to_string()),
+            Filter::Year => Ok("listing last year is not implemented yet".to_string()),
+            Filter::All => Ok("listing all is not implemented yet".to_string()),
+            Filter::Since => Ok("listing since a date is not implemented yet".to_string()),
         }
     } else {
         let mut days = cmd.days + (cmd.weeks * 7);
