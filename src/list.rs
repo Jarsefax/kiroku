@@ -2,6 +2,8 @@ use crate::{storage, time};
 use chrono::NaiveDate;
 use clap::{Parser, ValueEnum};
 use color_eyre::eyre::Result;
+use colored::{ColoredString, Colorize};
+use itertools::Itertools;
 
 #[derive(Parser)]
 #[command(visible_aliases = ["l", "ls"])]
@@ -94,13 +96,13 @@ pub fn execute(cmd: Cmd) -> Result<String> {
 
 fn list_last_day() -> Result<String> {
     let (mut traversed_lines, _) = get_last_day()?;
-    traversed_lines.push("Listing last day...\n".to_string());
+    traversed_lines.push("Listing last day...\n".normal());
 
     traversed_lines.reverse();
-    Ok(traversed_lines.join("\n"))
+    Ok(traversed_lines.iter().join("\n"))
 }
 
-fn get_last_day() -> Result<(Vec<String>, Option<String>)> {
+fn get_last_day() -> Result<(Vec<ColoredString>, Option<String>)> {
     let mut last_date: Option<String> = None;
 
     let rev_lines = storage::get_reverse_lines()?;
@@ -113,10 +115,12 @@ fn get_last_day() -> Result<(Vec<String>, Option<String>)> {
             let date_str = date.to_string();
             last_date = Some(date_str);
 
-            traversed_lines.push(line);
+            let colored_line = line.blue();
+            traversed_lines.push(colored_line);
             break;
         } else {
-            traversed_lines.push(line);
+            let colored_line = line.normal();
+            traversed_lines.push(colored_line);
         }
     }
 
@@ -130,12 +134,13 @@ fn list_today() -> Result<String> {
     if let Some(date) = last_date
         && date != today.to_string()
     {
-        traversed_lines.push("(No registrations today)\n".to_string());
+        let colored_line = "(No registrations today)\n".yellow();
+        traversed_lines.push(colored_line);
     }
-    traversed_lines.push("Listing today...\n".to_string());
+    traversed_lines.push("Listing today...\n".normal());
 
     traversed_lines.reverse();
-    Ok(traversed_lines.join("\n"))
+    Ok(traversed_lines.iter().join("\n"))
 }
 
 fn list_yesterday() -> Result<String> {
@@ -169,7 +174,8 @@ fn list_yesterday() -> Result<String> {
         traversed_lines.reverse();
         Ok(traversed_lines.join("\n"))
     } else {
-        Ok("Nothing recorded yesterday".to_string())
+        let nothing = Colorize::red("Nothing recorded yesterday");
+        Ok(nothing.to_string())
     }
 }
 
