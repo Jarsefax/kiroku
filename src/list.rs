@@ -115,7 +115,7 @@ fn get_last_day() -> Result<(Vec<ColoredString>, Option<String>)> {
             let date_str = date.to_string();
             last_date = Some(date_str);
 
-            let colored_line = line.blue();
+            let colored_line = line.green();
             traversed_lines.push(colored_line);
             break;
         } else {
@@ -134,6 +134,11 @@ fn list_today() -> Result<String> {
     if let Some(date) = last_date
         && date != today.to_string()
     {
+        let last = traversed_lines.last_mut();
+        if let Some(value) = last {
+            let x = value.clone().red();
+            *value = x;
+        }
         let colored_line = "(No registrations today)\n".yellow();
         traversed_lines.push(colored_line);
     }
@@ -157,22 +162,22 @@ fn list_yesterday() -> Result<String> {
             let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d");
             if date == Ok(today) {
                 let today_str = today.format("%Y-%m-%d").to_string();
-                traversed_lines.push(today_str);
+                traversed_lines.push(today_str.blue());
             } else if date == Ok(yesterday) {
                 found = true;
                 let yesterday_str = yesterday.to_string();
-                traversed_lines.push(yesterday_str);
+                traversed_lines.push(yesterday_str.green());
                 break;
             } else {
                 break;
             }
         } else {
-            traversed_lines.push(line);
+            traversed_lines.push(line.normal());
         }
     }
     if found {
         traversed_lines.reverse();
-        Ok(traversed_lines.join("\n"))
+        Ok(traversed_lines.iter().join("\n"))
     } else {
         let nothing = Colorize::red("Nothing recorded yesterday");
         Ok(nothing.to_string())
