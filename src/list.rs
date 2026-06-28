@@ -2,7 +2,7 @@ use crate::{storage, time};
 use chrono::NaiveDate;
 use clap::{Parser, ValueEnum};
 use color_eyre::eyre::Result;
-use colored::{ColoredString, Colorize};
+use colored::Colorize;
 use itertools::Itertools;
 
 #[derive(Parser)]
@@ -95,41 +95,16 @@ pub fn execute(cmd: Cmd) -> Result<String> {
 }
 
 fn list_last_day() -> Result<String> {
-    let (mut traversed_lines, _) = get_last_day()?;
+    let (mut traversed_lines, _) = storage::get_last_day()?;
     traversed_lines.push("Listing last day...\n".normal());
 
     traversed_lines.reverse();
     Ok(traversed_lines.iter().join("\n"))
 }
 
-fn get_last_day() -> Result<(Vec<ColoredString>, Option<String>)> {
-    let mut last_date: Option<String> = None;
-
-    let rev_lines = storage::get_reverse_lines()?;
-
-    let mut traversed_lines = Vec::new();
-    for line in rev_lines.flatten() {
-        let matched = line.starts_with('-');
-        if matched {
-            let date = line.trim_start_matches("- ");
-            let date_str = date.to_string();
-            last_date = Some(date_str);
-
-            let colored_line = line.green();
-            traversed_lines.push(colored_line);
-            break;
-        } else {
-            let colored_line = line.normal();
-            traversed_lines.push(colored_line);
-        }
-    }
-
-    Ok((traversed_lines, last_date))
-}
-
 fn list_today() -> Result<String> {
     let today = time::todays_date();
-    let (mut traversed_lines, last_date) = get_last_day()?;
+    let (mut traversed_lines, last_date) = storage::get_last_day()?;
 
     if let Some(date) = last_date
         && date != today.to_string()
@@ -156,12 +131,12 @@ fn list_yesterday() -> Result<String> {
     let mut found = false;
     let mut traversed_lines = Vec::new();
     for line in rev_lines.flatten() {
-        let matched = line.starts_with('-');
+        let matched = line.starts_with(storage::DATE_PREFIX);
         if matched {
-            let date_str = line.trim_start_matches("- ");
-            let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d");
+            let date_str = line.trim_start_matches(storage::DATE_PREFIX);
+            let date = NaiveDate::parse_from_str(date_str, time::DATE_FORMAT);
             if date == Ok(today) {
-                let today_str = today.format("%Y-%m-%d").to_string();
+                let today_str = today.format(time::DATE_FORMAT).to_string();
                 traversed_lines.push(today_str.blue());
             } else if date == Ok(yesterday) {
                 found = true;

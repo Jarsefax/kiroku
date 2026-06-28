@@ -1,4 +1,4 @@
-use crate::{append, config, list};
+use crate::{append, config, list, rollover};
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::Result;
 
@@ -16,6 +16,9 @@ pub struct Cli {
 pub enum Commands {
     /// Appends text to file
     Append(append::Cmd),
+
+    /// Moves what's left from last day to today
+    Rollover(rollover::Cmd),
 
     /// Lists content of file, default behaviour is listing last recorded day
     List(list::Cmd),
@@ -42,13 +45,18 @@ pub enum ItemCategory {
 pub fn handle_command(command: Commands) -> Result<()> {
     match command {
         Commands::Append(cmd) => append::execute(cmd.category, cmd.text),
+        Commands::Config(cmd) => {
+            let res = config::execute(cmd)?;
+            println!("{}", res);
+            Ok(())
+        }
         Commands::List(cmd) => {
             let res = list::execute(cmd)?;
             println!("{}", res);
             Ok(())
         }
-        Commands::Config(cmd) => {
-            let res = config::execute(cmd)?;
+        Commands::Rollover(_) => {
+            let res = rollover::execute()?;
             println!("{}", res);
             Ok(())
         }

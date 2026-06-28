@@ -20,9 +20,9 @@ pub fn execute(category: Option<ItemCategory>, text: String) -> Result<()> {
     }
 
     let t = match cat {
-        ItemCategory::Todo => "todo: ".to_owned() + &text,
-        ItemCategory::Doing => "doing: ".to_owned() + &text,
-        ItemCategory::Completed => "completed: ".to_owned() + &text,
+        ItemCategory::Todo => storage::TODO_PREFIX.to_owned() + &text,
+        ItemCategory::Doing => storage::DOING_PREFIX.to_owned() + &text,
+        ItemCategory::Completed => storage::COMPLETED_PREFIX.to_owned() + &text,
     };
-    storage::append_to_data_file(t)
+    storage::append_to_data_file(&t)
 }

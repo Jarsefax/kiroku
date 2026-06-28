@@ -2,6 +2,7 @@ mod append;
 mod command;
 mod config;
 mod list;
+mod rollover;
 mod storage;
 mod time;
 
