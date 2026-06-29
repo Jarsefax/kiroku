@@ -1,15 +1,16 @@
 mod append;
 mod command;
 mod config;
+mod interactive;
 mod list;
 mod rollover;
 mod storage;
 mod time;
 
 use crate::command::{Cli, ItemCategory, handle_command};
+use crate::interactive::app;
 use clap::Parser;
 use color_eyre::Result;
-use ratatui::{DefaultTerminal, Frame};
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -33,17 +34,4 @@ fn handle_args(args: Cli) -> Result<bool> {
     } else {
         Ok(false)
     }
-}
-
-fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
-    loop {
-        terminal.draw(render)?;
-        if crossterm::event::read()?.is_key_press() {
-            break Ok(());
-        }
-    }
-}
-
-fn render(frame: &mut Frame) {
-    frame.render_widget("hello world", frame.area());
 }
