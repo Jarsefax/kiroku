@@ -8,7 +8,6 @@ mod storage;
 mod time;
 
 use crate::command::{Cli, ItemCategory, handle_command};
-use crate::interactive::app;
 use clap::Parser;
 use color_eyre::Result;
 
@@ -19,8 +18,12 @@ fn main() -> Result<()> {
     if handle_args(args)? {
         Ok(())
     } else {
-        ratatui::run(app)?;
-        Ok(())
+        let mut terminal = ratatui::init();
+        let mut app = interactive::App::new();
+        let result = interactive::App::run(&mut app, &mut terminal);
+        ratatui::restore();
+
+        result
     }
 }
 
