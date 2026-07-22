@@ -5,7 +5,7 @@ use rev_lines::RevLines;
 use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::PathBuf;
 
 const QUALIFIER: &str = "io.github.jarsefax.kiroku";
@@ -87,4 +87,12 @@ pub fn get_reverse_lines() -> Result<RevLines<File>> {
 
     let file = File::open(path)?;
     Ok(RevLines::new(file))
+}
+
+pub fn get_lines() -> Result<Lines<BufReader<File>>> {
+    let path = get_data_file_path_buf()?;
+
+    let file = File::open(path)?;
+
+    Ok(BufReader::new(file).lines())
 }

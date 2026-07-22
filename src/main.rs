@@ -18,12 +18,7 @@ fn main() -> Result<()> {
     if handle_args(args)? {
         Ok(())
     } else {
-        let mut terminal = ratatui::init();
-        let mut app = interactive::App::new();
-        let result = interactive::App::run(&mut app, &mut terminal);
-        ratatui::restore();
-
-        result
+        interactive_mode()
     }
 }
 
@@ -37,4 +32,13 @@ fn handle_args(args: Cli) -> Result<bool> {
     } else {
         Ok(false)
     }
+}
+
+fn interactive_mode() -> Result<()> {
+    let terminal = ratatui::init();
+    let mut app = interactive::App::new()?;
+    let result = app.run(terminal);
+    ratatui::restore();
+
+    result
 }
