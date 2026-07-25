@@ -4,9 +4,9 @@ use crossterm::event::{self, Event, KeyCode};
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem},
+    widgets::{Block, Borders, List, ListItem, ListState},
 };
 
 // enum Mode {
@@ -16,13 +16,19 @@ use ratatui::{
 
 pub struct App {
     items: Vec<Item>,
+    state: ListState,
 }
 
 impl App {
     pub fn new() -> Result<App> {
         let items = get_items()?;
+        let mut state = ListState::default();
+        state.select(Some(0));
 
-        Ok(App { items: items })
+        Ok(App {
+            items: items,
+            state: state,
+        })
     }
 
     pub fn run(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
@@ -32,13 +38,51 @@ impl App {
             if let Event::Key(key) = event::read()? {
                 match key.code {
                     KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Up | KeyCode::Char('k') => self.up(),
+                    KeyCode::Down | KeyCode::Char('j') => self.down(),
                     _ => {}
                 }
             }
         }
     }
 
-    fn render(&self, frame: &mut Frame) {
+    fn up(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+
+        let i = match self.state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    0
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.state.select(Some(i));
+    }
+
+    fn down(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+
+        let i = match self.state.selected() {
+            Some(i) => {
+                if i == self.items.len() - 1 {
+                    i
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.state.select(Some(i));
+    }
+
+    fn render(&mut self, frame: &mut Frame) {
         let screen_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(100)])
@@ -74,12 +118,17 @@ impl App {
             })
             .collect();
 
-        // Create the List widget, wrapping it in a border box
-        let list =
-            List::new(items).block(Block::default().borders(Borders::ALL).title(" TODO List "));
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title(" TODO List "))
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Blue)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(">> ");
 
-        // Render the list inside our designated area chunk
-        frame.render_widget(list, screen_chunks[0]);
+        frame.render_stateful_widget(list, screen_chunks[0], &mut self.state);
     }
 }
 
