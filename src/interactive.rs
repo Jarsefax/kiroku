@@ -6,17 +6,13 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
-
-// enum Mode {
-//     Normal,
-//     Editing,
-// }
 
 pub struct App {
     items: Vec<Item>,
     state: ListState,
+    edit: Option<Item>,
 }
 
 impl App {
@@ -28,6 +24,7 @@ impl App {
         Ok(App {
             items: items,
             state: state,
+            edit: None,
         })
     }
 
@@ -40,6 +37,7 @@ impl App {
                     KeyCode::Char('q') => return Ok(()),
                     KeyCode::Up | KeyCode::Char('k') => self.up(),
                     KeyCode::Down | KeyCode::Char('j') => self.down(),
+                    KeyCode::Char('e') => self.edit(),
                     _ => {}
                 }
             }
@@ -82,35 +80,53 @@ impl App {
         self.state.select(Some(i));
     }
 
+    fn edit(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+
+        match self.state.selected() {
+            Some(i) => {
+                let item = self.items[i].clone();
+                self.edit = Some(item);
+            }
+            None => {
+                return;
+            }
+        }
+    }
+
     fn render(&mut self, frame: &mut Frame) {
+        let area = frame.area();
         let screen_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(100)])
-            .split(frame.area());
+            .split(area);
 
         let items: Vec<ListItem> = self
             .items
             .iter()
             .map(|item| {
+                let text = &item.text_in_file[item.prefix_length..];
                 let (line, style) = if item.category == ItemCategory::Date {
                     let style = Style::default().fg(Color::Magenta);
-                    let line = Line::from(Span::raw(item.text.as_str()));
+                    let line = Line::from(Span::raw(text));
                     (line, style)
                 } else if item.category == ItemCategory::Todo {
                     let style = Style::default().fg(Color::LightYellow);
-                    let line = Line::from(vec![Span::raw("  "), Span::raw(item.text.as_str())]);
+                    let line = Line::from(vec![Span::raw("  "), Span::raw(text)]);
                     (line, style)
                 } else if item.category == ItemCategory::Doing {
                     let style = Style::default().fg(Color::LightBlue);
-                    let line = Line::from(vec![Span::raw("  "), Span::raw(item.text.as_str())]);
+                    let line = Line::from(vec![Span::raw("  "), Span::raw(text)]);
                     (line, style)
                 } else if item.category == ItemCategory::Completed {
                     let style = Style::default().fg(Color::LightGreen);
-                    let line = Line::from(vec![Span::raw("  "), Span::raw(item.text.as_str())]);
+                    let line = Line::from(vec![Span::raw("  "), Span::raw(text)]);
                     (line, style)
                 } else {
                     let style = Style::default().fg(Color::Red);
-                    let line = Line::from(Span::raw(item.text.as_str()));
+                    let line = Line::from(Span::raw(text));
                     (line, style)
                 };
 
@@ -119,7 +135,7 @@ impl App {
             .collect();
 
         let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title(" TODO List "))
+            .block(Block::default().borders(Borders::ALL).title(" Kiroku "))
             .highlight_style(
                 Style::default()
                     .bg(Color::Blue)
@@ -129,6 +145,16 @@ impl App {
             .highlight_symbol(">> ");
 
         frame.render_stateful_widget(list, screen_chunks[0], &mut self.state);
+
+        if let Some(edit) = &mut self.edit {
+            let center = area.centered(Constraint::Percentage(60), Constraint::Percentage(20));
+            frame.render_widget(Clear, center);
+
+            let popup = Block::bordered().title(" Edit ");
+            let text = &edit.text_in_file[edit.prefix_length..];
+            let paragraph = Paragraph::new(text).block(popup);
+            frame.render_widget(paragraph, center);
+        }
     }
 }
 
@@ -136,36 +162,43 @@ fn get_items() -> Result<Vec<Item>> {
     let mut items = Vec::new();
 
     let lines = storage::get_lines()?;
-    for line in lines {
-        if let Ok(text) = line {
-            if text.is_empty() {
+    for (index_in_file, line) in lines.enumerate() {
+        if let Ok(text_in_file) = line {
+            if text_in_file.is_empty() {
                 continue;
             }
 
-            let date_line = text.starts_with(storage::DATE_PREFIX);
-            if date_line {
-                let date_str = text.trim_start_matches(storage::DATE_PREFIX);
-                let item = Item {
-                    category: ItemCategory::Date,
-                    text: date_str.to_string(),
-                };
+            let is_date_line = text_in_file.starts_with(storage::DATE_PREFIX);
+            if is_date_line {
+                let item = Item::new(
+                    ItemCategory::Date,
+                    storage::DATE_PREFIX.len(),
+                    text_in_file.to_string(),
+                    index_in_file,
+                );
                 items.push(item);
             } else {
                 let category: ItemCategory;
-                if text.starts_with(storage::TODO_PREFIX) {
+                let prefix_length: usize;
+                if text_in_file.starts_with(storage::TODO_PREFIX) {
                     category = ItemCategory::Todo;
-                } else if text.starts_with(storage::DOING_PREFIX) {
+                    prefix_length = storage::TODO_PREFIX.len();
+                } else if text_in_file.starts_with(storage::DOING_PREFIX) {
                     category = ItemCategory::Doing;
-                } else if text.starts_with(storage::COMPLETED_PREFIX) {
+                    prefix_length = storage::DOING_PREFIX.len();
+                } else if text_in_file.starts_with(storage::COMPLETED_PREFIX) {
                     category = ItemCategory::Completed;
+                    prefix_length = storage::COMPLETED_PREFIX.len();
                 } else {
                     bail!("unrecognized line prefix")
                 }
 
-                let item = Item {
-                    category: category,
-                    text: text,
-                };
+                let item = Item::new(
+                    category,
+                    prefix_length,
+                    text_in_file.to_string(),
+                    index_in_file,
+                );
                 items.push(item);
             }
         }
@@ -174,12 +207,31 @@ fn get_items() -> Result<Vec<Item>> {
     Ok(items)
 }
 
+#[derive(Clone)]
 struct Item {
     category: ItemCategory,
-    text: String,
+    prefix_length: usize,
+    text_in_file: String,
+    index_in_file: usize,
 }
 
-#[derive(PartialEq)]
+impl Item {
+    fn new(
+        category: ItemCategory,
+        prefix_length: usize,
+        text_in_file: String,
+        index_in_file: usize,
+    ) -> Item {
+        Item {
+            category: category,
+            prefix_length: prefix_length,
+            text_in_file: text_in_file,
+            index_in_file: index_in_file,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
 enum ItemCategory {
     Date,
     Todo,
