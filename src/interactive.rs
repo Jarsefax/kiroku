@@ -17,7 +17,7 @@ pub struct App {
 
 impl App {
     pub fn new() -> Result<App> {
-        let items = get_items()?;
+        let items = get_ordered_items()?;
         let mut state = ListState::default();
         state.select(Some(0));
 
@@ -158,8 +158,11 @@ impl App {
     }
 }
 
-fn get_items() -> Result<Vec<Item>> {
+fn get_ordered_items() -> Result<Vec<Item>> {
     let mut items = Vec::new();
+    let mut todos = Vec::new();
+    let mut doings = Vec::new();
+    let mut completeds = Vec::new();
 
     let lines = storage::get_lines()?;
     for (index_in_file, line) in lines.enumerate() {
@@ -176,6 +179,9 @@ fn get_items() -> Result<Vec<Item>> {
                     text_in_file.to_string(),
                     index_in_file,
                 );
+                items.append(&mut todos);
+                items.append(&mut doings);
+                items.append(&mut completeds);
                 items.push(item);
             } else {
                 let category: ItemCategory;
@@ -183,26 +189,42 @@ fn get_items() -> Result<Vec<Item>> {
                 if text_in_file.starts_with(storage::TODO_PREFIX) {
                     category = ItemCategory::Todo;
                     prefix_length = storage::TODO_PREFIX.len();
+                    let item = Item::new(
+                        category,
+                        prefix_length,
+                        text_in_file.to_string(),
+                        index_in_file,
+                    );
+                    todos.push(item);
                 } else if text_in_file.starts_with(storage::DOING_PREFIX) {
                     category = ItemCategory::Doing;
                     prefix_length = storage::DOING_PREFIX.len();
+                    let item = Item::new(
+                        category,
+                        prefix_length,
+                        text_in_file.to_string(),
+                        index_in_file,
+                    );
+                    doings.push(item);
                 } else if text_in_file.starts_with(storage::COMPLETED_PREFIX) {
                     category = ItemCategory::Completed;
                     prefix_length = storage::COMPLETED_PREFIX.len();
+                    let item = Item::new(
+                        category,
+                        prefix_length,
+                        text_in_file.to_string(),
+                        index_in_file,
+                    );
+                    completeds.push(item);
                 } else {
                     bail!("unrecognized line prefix")
                 }
-
-                let item = Item::new(
-                    category,
-                    prefix_length,
-                    text_in_file.to_string(),
-                    index_in_file,
-                );
-                items.push(item);
             }
         }
     }
+    items.append(&mut todos);
+    items.append(&mut doings);
+    items.append(&mut completeds);
 
     Ok(items)
 }
