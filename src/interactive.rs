@@ -3,7 +3,7 @@ use color_eyre::{Result, eyre::bail};
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::{
     DefaultTerminal, Frame,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Position},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
@@ -13,6 +13,8 @@ pub struct App {
     items: Vec<Item>,
     state: ListState,
     edit: Option<Item>,
+    input: String,
+    input_character_index: usize,
 }
 
 impl App {
@@ -25,6 +27,8 @@ impl App {
             items: items,
             state: state,
             edit: None,
+            input: String::new(),
+            input_character_index: 0,
         })
     }
 
@@ -33,12 +37,28 @@ impl App {
             terminal.draw(|f| self.render(f))?;
 
             if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Up | KeyCode::Char('k') => self.up(),
-                    KeyCode::Down | KeyCode::Char('j') => self.down(),
-                    KeyCode::Char('e') => self.edit(),
-                    _ => {}
+                match self.edit {
+                    None => match key.code {
+                        KeyCode::Char('q') => return Ok(()),
+                        KeyCode::Up | KeyCode::Char('k') => self.up(),
+                        KeyCode::Down | KeyCode::Char('j') => self.down(),
+                        KeyCode::Char('e') => self.edit(),
+                        _ => {}
+                    },
+                    Some(_) => match key.code {
+                        KeyCode::Esc => self.back(),
+                        KeyCode::Enter => {
+                            // 1: write new to .tmp
+                            // 2: rename original to .bak
+                            // 3: rename .tmp to original
+                        }
+                        KeyCode::Char(to_insert) => self.add_to_input(to_insert),
+                        KeyCode::Left => self.left(),
+                        KeyCode::Right => self.right(),
+                        KeyCode::Delete => self.forward_delete_from_input(),
+                        KeyCode::Backspace => self.backward_delete_from_input(),
+                        _ => {}
+                    },
                 }
             }
         }
@@ -88,10 +108,82 @@ impl App {
         match self.state.selected() {
             Some(i) => {
                 let item = self.items[i].clone();
+                let text = &item.text_in_file;
+                let len = item.prefix_length;
+                let input = &text[len..];
+                self.input = input.to_string();
                 self.edit = Some(item);
             }
             None => {
                 return;
+            }
+        }
+    }
+
+    fn back(&mut self) {
+        if let Some(_) = self.edit {
+            self.edit = None;
+        }
+    }
+
+    fn clamp_character_index(&self, new_character_index: usize) -> usize {
+        new_character_index.clamp(0, self.input.chars().count())
+    }
+
+    fn right(&mut self) {
+        let caret_moved_right = self.input_character_index.saturating_add(1);
+        self.input_character_index = self.clamp_character_index(caret_moved_right);
+    }
+
+    fn left(&mut self) {
+        let caret_moved_left = self.input_character_index.saturating_sub(1);
+        self.input_character_index = self.clamp_character_index(caret_moved_left);
+    }
+
+    fn input_byte_index(&self) -> usize {
+        self.input
+            .char_indices()
+            .map(|(i, _)| i)
+            .nth(self.input_character_index)
+            .unwrap_or(self.input.len())
+    }
+
+    fn add_to_input(&mut self, new_character: char) {
+        let i = self.input_byte_index();
+        self.input.insert(i, new_character);
+    }
+
+    fn backward_delete_from_input(&mut self) {
+        let caret_is_not_in_first_position = self.input_character_index != 0;
+        if caret_is_not_in_first_position {
+            // ratatui example
+            // let current_index = self.input_character_index;
+            // let chars_to_the_left = current_index - 1;
+
+            // let before_char_to_delete = self.input.chars().take(chars_to_the_left);
+            // let after_char = self.input.chars().skip(current_index);
+
+            // self.input = before_char_to_delete.chain(after_char).collect();
+            // self.left();
+            // ratatui example
+
+            // LLM suggestion
+            let target_char_index = self.input_character_index - 1;
+            if let Some((byte_offset, _)) = self.input.char_indices().nth(target_char_index) {
+                self.input.remove(byte_offset);
+                self.left();
+            }
+            // LLM suggestion
+        }
+    }
+
+    fn forward_delete_from_input(&mut self) {
+        let caret_is_not_in_last_position = self.input_character_index < self.input.chars().count();
+        if caret_is_not_in_last_position {
+            let target_char_index = self.input_character_index;
+            if let Some((byte_offset, _)) = self.input.char_indices().nth(target_char_index) {
+                self.input.remove(byte_offset);
+                // self.left();
             }
         }
     }
@@ -146,14 +238,19 @@ impl App {
 
         frame.render_stateful_widget(list, screen_chunks[0], &mut self.state);
 
-        if let Some(edit) = &mut self.edit {
+        if let Some(_) = &mut self.edit {
             let center = area.centered(Constraint::Percentage(60), Constraint::Percentage(20));
             frame.render_widget(Clear, center);
 
             let popup = Block::bordered().title(" Edit ");
-            let text = &edit.text_in_file[edit.prefix_length..];
-            let paragraph = Paragraph::new(text).block(popup);
+            let paragraph = Paragraph::new(self.input.clone()).block(popup);
             frame.render_widget(paragraph, center);
+
+            let pos = Position::new(
+                center.x + self.input_character_index as u16 + 1,
+                center.y + 1,
+            );
+            frame.set_cursor_position(pos);
         }
     }
 }
