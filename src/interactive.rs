@@ -42,15 +42,13 @@ impl App {
                         KeyCode::Char('q') => return Ok(()),
                         KeyCode::Up | KeyCode::Char('k') => self.up(),
                         KeyCode::Down | KeyCode::Char('j') => self.down(),
-                        KeyCode::Char('e') => self.edit(),
+                        KeyCode::Char('e') => self.enter_edit(),
                         _ => {}
                     },
                     Some(_) => match key.code {
                         KeyCode::Esc => self.back(),
                         KeyCode::Enter => {
-                            // 1: write new to .tmp
-                            // 2: rename original to .bak
-                            // 3: rename .tmp to original
+                            _ = self.exit_edit()?;
                         }
                         KeyCode::Char(to_insert) => self.add_to_input(to_insert),
                         KeyCode::Left => self.left(),
@@ -100,7 +98,7 @@ impl App {
         self.state.select(Some(i));
     }
 
-    fn edit(&mut self) {
+    fn enter_edit(&mut self) {
         if self.items.is_empty() {
             return;
         }
@@ -118,6 +116,20 @@ impl App {
                 return;
             }
         }
+    }
+
+    fn exit_edit(&mut self) -> Result<()> {
+        let edit = self.edit.as_ref().unwrap();
+        let res: ();
+        if self.input != edit.text_in_file {
+            res = storage::replace_line(edit.index_in_file, &self.input)?;
+            // todo replace text on screen
+        } else {
+            res = ();
+        }
+
+        self.edit = None;
+        Ok(res)
     }
 
     fn back(&mut self) {
@@ -156,24 +168,11 @@ impl App {
     fn backward_delete_from_input(&mut self) {
         let caret_is_not_in_first_position = self.input_character_index != 0;
         if caret_is_not_in_first_position {
-            // ratatui example
-            // let current_index = self.input_character_index;
-            // let chars_to_the_left = current_index - 1;
-
-            // let before_char_to_delete = self.input.chars().take(chars_to_the_left);
-            // let after_char = self.input.chars().skip(current_index);
-
-            // self.input = before_char_to_delete.chain(after_char).collect();
-            // self.left();
-            // ratatui example
-
-            // LLM suggestion
             let target_char_index = self.input_character_index - 1;
             if let Some((byte_offset, _)) = self.input.char_indices().nth(target_char_index) {
                 self.input.remove(byte_offset);
                 self.left();
             }
-            // LLM suggestion
         }
     }
 
@@ -183,7 +182,6 @@ impl App {
             let target_char_index = self.input_character_index;
             if let Some((byte_offset, _)) = self.input.char_indices().nth(target_char_index) {
                 self.input.remove(byte_offset);
-                // self.left();
             }
         }
     }

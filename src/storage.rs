@@ -5,8 +5,10 @@ use rev_lines::RevLines;
 use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
+use std::io::BufWriter;
 use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::PathBuf;
+use tempfile::NamedTempFile;
 
 const QUALIFIER: &str = "io.github.jarsefax.kiroku";
 const ORGANIZATION: &str = "jarsefax";
@@ -95,4 +97,38 @@ pub fn get_lines() -> Result<Lines<BufReader<File>>> {
     let file = File::open(path)?;
 
     Ok(BufReader::new(file).lines())
+}
+
+fn backup(path: &PathBuf) -> Result<()> {
+    let backup_path = path.with_extension("bak");
+    let res = fs::rename(&path, &backup_path)?;
+
+    Ok(res)
+}
+
+pub fn replace_line(line_number: usize, new_line: &str) -> Result<()> {
+    let path = get_data_file_path_buf()?;
+    let file = File::open(&path)?;
+    let reader = BufReader::new(&file);
+
+    let data_dir = get_data_dir_path_buf()?;
+    let temp_file = NamedTempFile::new_in(&data_dir)?;
+    let mut writer = BufWriter::new(temp_file);
+
+    for (i, line) in reader.lines().enumerate() {
+        let l = line?;
+
+        if i == line_number {
+            writeln!(writer, "{}", new_line)?;
+        } else {
+            writeln!(writer, "{}", l)?;
+        }
+    }
+
+    let named = writer.into_inner()?;
+
+    backup(&path)?;
+    named.persist(path)?;
+
+    Ok(())
 }
