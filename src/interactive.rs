@@ -34,6 +34,7 @@ impl App {
 
     pub fn run(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
         loop {
+            // todo: only draw when events?
             terminal.draw(|f| self.render(f))?;
 
             if let Event::Key(key) = event::read()? {
@@ -124,6 +125,9 @@ impl App {
         if self.input != edit.text_in_file {
             res = storage::replace_line(edit.index_in_file, &self.input)?;
             // todo replace text on screen
+            let idx = self.state.selected().unwrap();
+            let itm = &mut self.items[idx];
+            itm.text_in_file = self.input.clone();
         } else {
             res = ();
         }
