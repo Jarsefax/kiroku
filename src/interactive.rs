@@ -123,11 +123,16 @@ impl App {
         let edit = self.edit.as_ref().unwrap();
         let res: ();
         if self.input != edit.text_in_file {
-            res = storage::replace_line(edit.index_in_file, &self.input)?;
-            // todo replace text on screen
+            let t = match edit.category {
+                ItemCategory::Todo => storage::TODO_PREFIX.to_owned() + &self.input,
+                ItemCategory::Doing => storage::DOING_PREFIX.to_owned() + &self.input,
+                ItemCategory::Completed => storage::COMPLETED_PREFIX.to_owned() + &self.input,
+                ItemCategory::Date => unreachable!("how was editing a date possible?"),
+            };
+            res = storage::replace_line(edit.index_in_file, &t)?;
             let idx = self.state.selected().unwrap();
             let itm = &mut self.items[idx];
-            itm.text_in_file = self.input.clone();
+            itm.text_in_file = t;
         } else {
             res = ();
         }
