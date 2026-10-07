@@ -1,0 +1,185 @@
+# Kiroku
+
+A fast terminal work log. The command is **`krk`**. Log short titles in
+**To do**, **Doing**, and **Done**, grouped by date in editable monthly
+Markdown files. No database and no timestamps on items.
+
+## Getting started
+
+```sh
+krk new-day
+krk add "weekly meeting"
+krk add "monthly op meeting - september"
+krk list
+krk doing 1
+krk list
+krk done 2
+krk
+```
+
+Item numbers can change after moves or removals. Every change prints the
+updated active day; use the numbers from that output for the next command.
+Numbers are unique across all three sections of the active day.
+
+Run `krk --help` or `krk COMMAND --help` for command help.
+
+## Commands
+
+| Command | Behavior |
+| --- | --- |
+| `krk` | Open the keyboard-driven TUI |
+| `krk new-day` | Start today explicitly; leave an existing today unchanged |
+| `krk add "title"` | Add a todo to the active day |
+| `krk list` | Show today; if empty, also show the previous recorded day |
+| `krk doing NUMBER` | Move an active-day item into Doing |
+| `krk done NUMBER` | Move an active-day item into Done |
+| `krk todo NUMBER` | Move an active-day item back into To do |
+| `krk edit NUMBER "title"` | Rename an active-day item |
+| `krk remove NUMBER` | Remove an active-day item immediately |
+| `krk path` | Print the resolved log directory |
+
+All status commands can move an item from any section. Titles must be
+nonempty, single-line text; Unicode and duplicate titles are supported.
+
+### Days and rollover
+
+Opening Kiroku, listing items, and crossing midnight do **not** start a day.
+Until you run `krk new-day`, additions and changes apply to the last recorded
+day, even after a weekend or across a month boundary. Dates use your local
+timezone. The first day starts empty.
+
+Starting a new day copies the previous recorded day's To do and Doing items
+into the new day's To do section. Done items stay behind. Earlier records
+remain intact; skipped days are not created. Starting an already recorded
+today does not copy items again. Starting a date supplied on the command line
+is not supported in this version.
+
+If today has not been started, `krk list` says so and shows the last recorded
+day. If today exists but is empty, it shows both today and the most recent
+earlier record. Output always labels dates and the active day. Active-day
+items have numbers; historical items have letters (`A`…`Z`, `AA`, etc.).
+Historical letters are browsing labels, not arguments for editing commands.
+
+### Listing dates
+
+```sh
+krk list today
+krk list yesterday
+krk list week
+krk list month
+krk list 2026-10-02
+krk list 2026-09-28..2026-10-07
+```
+
+Week means the current calendar week, Monday–Sunday. Month means the
+current calendar month. Ranges include both endpoints. Explicit selections
+show only the requested period, with recorded days in chronological order;
+they do not fall back to another day or create missing records.
+
+## Keyboard navigation
+
+| Key | Action |
+| --- | --- |
+| ↑/↓ or `j`/`k` | Select an item |
+| ←/→ or `h`/`l` | Browse earlier/later recorded days |
+| Home/End or `g`/`G` | Select the first/last item |
+| `a` | Add a todo |
+| `s`, `d`, `t` | Move to Doing, Done, or To do |
+| `e` | Edit the selected title |
+| `x` | Remove the selected item, with a `y`/`n` confirmation |
+| `n` | Start today explicitly |
+| `r` | Reload manually edited files |
+| `?` | Show help |
+| `q` or Ctrl-C | Quit |
+
+In a title prompt, type or paste a title, use Backspace to delete a character
+or Ctrl-U to clear, Enter to save, and Esc to cancel. The app edits only the active day;
+historical days can be edited directly in their Markdown files. It redraws
+on input and resize rather than running an idle animation loop.
+
+## Files and configuration
+
+Default logs live in **`~/Document/kiroku/`**, with singular `Document`.
+Each month has a file such as `2026-10.md`:
+
+```markdown
+# 2026-10-06
+
+## To do
+- monthly op meeting - september
+
+## Doing
+- weekly meeting
+
+## Done
+- update documentation
+```
+
+Append another date heading and the same three sections for each recorded
+day. Dates must be unique, chronological, and belong to the filename's month.
+Keep section names and their order as shown. Items use `- title`.
+Blank lines and standalone HTML comments (`<!-- notes -->`, including
+multiline comments) are supported and preserved. Other prose or Markdown
+structures produce a parse error rather than being silently rewritten.
+
+Kiroku preserves untouched lines and earlier day records. It saves through
+an atomic replacement and serializes its writes using `.kiroku.lock` in the
+data directory. Temporary files and the lock are not part of the log format.
+Reload the TUI with `r` after manual edits. A stale TUI selection is rejected
+before it can change a different item. Avoid saving from an external editor
+at exactly the same time as an app write; external editors do not use the
+app's lock.
+
+Optional settings live in **`~/.config/kiroku/config.toml`**, or
+`$XDG_CONFIG_HOME/kiroku/config.toml` when that variable is an absolute path.
+No config file is required.
+
+```toml
+data_dir = "~/Document/kiroku"
+```
+
+Change that setting to choose a persistent directory. For a single invocation:
+
+```sh
+krk --data-dir ~/other-folder list
+```
+
+Directory precedence is command-line override, saved setting, then default.
+Home-relative `~/` paths are expanded; relative paths resolve against the
+working directory. `krk path` prints the resolved location. Read-only commands
+do not create directories or log files.
+
+## Building and installing
+
+Kiroku targets Linux initially. Rust 1.88 or later is needed **only to build**;
+the resulting executable does not need Rust or an interpreter installed.
+
+```sh
+cargo build --release --locked
+install -Dm755 target/release/krk ~/.local/bin/krk
+```
+
+For a fully static Linux x86-64 executable with no shared-library dependencies:
+
+```sh
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --locked --target x86_64-unknown-linux-musl
+install -Dm755 target/x86_64-unknown-linux-musl/release/krk ~/.local/bin/krk
+```
+
+The repository config uses Rust's bundled `rust-lld` linker for this target.
+Ensure `~/.local/bin` is in your shell's PATH. Install the binary only; the
+source code, Cargo, and build toolchain are not needed to run it.
+
+## Development checks
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --locked
+```
+
+Tests cover rollover across weekends/months, numbered duplicate titles,
+date selection and list fallback, manual comments and CRLF preservation,
+malformed-file protection, stale selections, concurrent writes, configuration,
+CLI workflows, and TUI keyboard/render behavior.

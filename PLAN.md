@@ -62,13 +62,12 @@ meeting" or "monthly op meeting - september".
 - Allow selecting which day or days to list, including today, yesterday,
   week, and month.
 
-## Proposed interface and storage
+## First-version interface and storage
 
-These choices are proposals to settle before implementation.
+These defaults were adopted for the first implementation.
 
 - `krk new-day` starts today's record.
-- Provide `krk path` to print the resolved data directory. This command
-  remains a proposal.
+- Provide `krk path` to print the resolved data directory.
 - Generate item numbers from the active day's list rather than storing IDs
   alongside titles. Use unique numbers across all three sections of that day.
   Numbers may change after edits or moves; show the updated list after changes.
@@ -77,50 +76,79 @@ These choices are proposals to settle before implementation.
   today, the previous recorded day remains active and retains its numbers.
   After starting an empty today, the preceding day is historical and receives
   letters. Historical labels are for browsing; mutation commands accept only
-  active-day numbers. This numbering scheme is a proposal.
-- Proposed selectors: `krk list today`, `krk list yesterday`,
+  active-day numbers. Letters continue past Z as AA, AB, etc., and are unique
+  across historical items in each CLI listing.
+- Selectors: `krk list today`, `krk list yesterday`,
   `krk list week`, `krk list month`, `krk list YYYY-MM-DD`, and
   `krk list YYYY-MM-DD..YYYY-MM-DD` (inclusive range).
 - Interpret today/yesterday as calendar dates in the user's local timezone,
   week as the current calendar week (Monday through Sunday), and month as the
-  current calendar month. These period definitions are proposals.
+  current calendar month.
 - Explicit date selectors show only the requested dates, with no fallback
   to a different period. Multi-day views group items by date in chronological
   order and show recorded days, including empty records. Report when the
-  selected period has no records. These display details are proposals.
+  selected period has no records.
 - The TUI supports browsing days, navigating items, adding titles, and
   changing status with keyboard shortcuts.
 - If days are skipped, carry unfinished items from the most recent recorded
   day, without creating intervening files.
 - If today's record already exists, the new-day command leaves it intact
   and reports that the day has already been started.
+- Starting a supplied date is not supported initially; `new-day` starts today
+  only. If the last recorded date is later than today, report an error.
+- All status commands may move an active-day item from any status. Editing
+  replaces its title; removal deletes the item. CLI removal is immediate;
+  TUI removal has a y/n confirmation.
+- Preserve untouched lines, previous day records, blank lines, and standalone
+  HTML comments, including multiline comments. Retain the file's LF/CRLF
+  newline convention. Reject malformed or unsupported content instead of
+  overwriting it.
+- Dates must be unique and chronological within the correct monthly file.
+  Each day must have the three status headings in To do, Doing, Done order.
+  Titles are nonempty single-line text; Unicode and duplicate titles work.
+- Use atomic file replacement and serialize app writes with a directory lock.
+  Reject stale TUI item selections after external edits and provide reload.
+- TUI: arrows/jk select items, arrows/hl browse days, a adds, s/d/t change
+  status, e edits, x removes, n starts today, r reloads, ? shows help, q quits.
+  Enter saves a title prompt; Esc cancels; Backspace edits; Ctrl-U clears.
 
-## Recommended technology
+Example monthly file:
+
+```markdown
+# 2026-10-06
+
+## To do
+- monthly op meeting - september
+
+## Doing
+- weekly meeting
+
+## Done
+- update documentation
+```
+
+## Technology
 
 Rust, compiled in release mode to a native executable named `krk`.
 Rust's toolchain is needed to build the app, but is not needed to run the
-distributed executable. Produce binaries for each supported operating system
-and architecture; for Linux, target musl for a self-contained static build.
+distributed executable. Target Linux initially, with an x86-64 musl release
+build for a self-contained static executable.
 
 Use Ratatui with Crossterm for the TUI. Both are compiled into the executable.
 Keep the CLI direct and lightweight, and redraw the TUI on input or resize
 rather than running a continuous animation loop. Read only the log files
 needed for the current operation.
 
-This technology choice is a recommendation pending agreement, not an
-implementation already started.
+## Deferred features
 
-## Decisions still to make
-
-- Whether starting a day for a supplied date is supported.
-- Confirm active-day numbers versus historical letters, including labeling
-  large multi-day listings and whether app-based historical editing is needed.
-- Confirm date selector syntax and calendar week/month definitions.
-- Exact text format, including preserving manual edits.
-- Reordering items and the details of editing/removal.
-- Confirm the recommended technology and supported operating systems.
-- Additional list options and TUI key bindings.
+- Reordering items through the app (manual file editing is available).
+- Historical editing through the app (manual file editing is available).
+- Starting a day for a supplied date.
+- Releases for other operating systems and architectures.
 
 ## Status
 
-Planning only. No implementation has been started.
+First implementation complete: CLI, TUI, monthly Markdown storage, and
+configuration. README.md documents commands, file format, installation,
+keyboard shortcuts, and verification. The application is not installed into
+the user's PATH automatically.
