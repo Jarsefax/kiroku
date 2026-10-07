@@ -43,10 +43,16 @@ enum Command {
         )]
         period: Option<String>,
     },
-    /// Move an active-day item into Doing
-    Doing { number: usize },
-    /// Move an active-day item into Done
-    Done { number: usize },
+    /// Add a title, or move a numbered active-day item into Doing
+    Doing {
+        #[arg(value_name = "TITLE_OR_NUMBER")]
+        value: String,
+    },
+    /// Add a title, or move a numbered active-day item into Done
+    Done {
+        #[arg(value_name = "TITLE_OR_NUMBER")]
+        value: String,
+    },
     /// Add a title, or move a numbered active-day item back into To do
     Todo {
         #[arg(value_name = "TITLE_OR_NUMBER")]
@@ -64,6 +70,17 @@ fn output(text: &str) -> Result<()> {
     match io::stdout().lock().write_all(text.as_bytes()) {
         Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
         result => result.context("Cannot write output"),
+    }
+}
+
+fn status_change(value: String, status: Status) -> Result<Change> {
+    if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        Ok(Change::Move(
+            value.parse().context("Item number is too large")?,
+            status,
+        ))
+    } else {
+        Ok(Change::Add(value, status))
     }
 }
 
@@ -95,18 +112,9 @@ fn run() -> Result<()> {
                 today,
             ));
         }
-        Some(Command::Doing { number }) => Change::Move(number, Status::Doing),
-        Some(Command::Done { number }) => Change::Move(number, Status::Done),
-        Some(Command::Todo { value }) => {
-            if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
-                Change::Move(
-                    value.parse().context("Item number is too large")?,
-                    Status::Todo,
-                )
-            } else {
-                Change::Add(value)
-            }
-        }
+        Some(Command::Doing { value }) => status_change(value, Status::Doing)?,
+        Some(Command::Done { value }) => status_change(value, Status::Done)?,
+        Some(Command::Todo { value }) => status_change(value, Status::Todo)?,
         Some(Command::Edit { number, title }) => Change::Edit(number, title),
         Some(Command::Remove { number }) => Change::Remove(number),
     };

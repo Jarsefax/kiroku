@@ -43,7 +43,7 @@ fn real_cli_workflow_with_unicode_duplicate_titles_and_errors() {
     let path = logs.join(format!("{}.md", Local::now().format("%Y-%m")));
     let before = fs::read(&path).unwrap();
     for args in [
-        &["done", "A"][..],
+        &["done", "0"][..],
         &["remove", "0"],
         &["list", "2026-02-30"],
         &["todo", "  "],
@@ -101,4 +101,61 @@ fn todo_adds_text_and_moves_references_from_doing_and_done() {
             .any(|line| line.trim_start().starts_with("add "))
     );
     assert!(success(logs, &["todo", "--help"]).contains("TITLE_OR_NUMBER"));
+}
+
+#[test]
+fn every_status_command_adds_titles_and_moves_existing_items() {
+    for (command, status) in [
+        ("todo", Status::Todo),
+        ("doing", Status::Doing),
+        ("done", Status::Done),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let logs = temp.path();
+        assert!(!run(logs, &[command, "meeting"]).status.success());
+        success(logs, &["new-day"]);
+        success(logs, &[command, "möte 日本語 123"]);
+        let store = Store::new(logs.to_path_buf());
+        let day = store.active().unwrap().unwrap();
+        assert_eq!(day.items.len(), 1);
+        assert_eq!(day.items[0].title, "möte 日本語 123");
+        assert_eq!(day.items[0].status, status);
+
+        for source in ["todo", "doing", "done"] {
+            success(logs, &[source, "1"]);
+            success(logs, &[command, "1"]);
+            let day = store.active().unwrap().unwrap();
+            assert_eq!(day.items.len(), 1);
+            assert_eq!(day.items[0].title, "möte 日本語 123");
+            assert_eq!(day.items[0].status, status);
+        }
+
+        success(logs, &[command, "möte 日本語 123"]);
+        success(logs, &[command, "A"]);
+        let day = store.active().unwrap().unwrap();
+        assert_eq!(day.items.len(), 3);
+        assert!(day.items.iter().all(|item| item.status == status));
+        assert_eq!(day.items[1].title, "möte 日本語 123");
+        assert_eq!(day.items[2].title, "A");
+
+        let path = logs.join(format!("{}.md", Local::now().format("%Y-%m")));
+        let before = fs::read(&path).unwrap();
+        for value in [
+            "",
+            "  ",
+            "bad\ntitle",
+            "0",
+            "4",
+            "9999999999999999999999999999999999999999",
+        ] {
+            assert!(
+                !run(logs, &[command, value]).status.success(),
+                "{command} {value:?}"
+            );
+            assert_eq!(fs::read(&path).unwrap(), before);
+        }
+        assert!(!run(logs, &[command]).status.success());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert!(success(logs, &[command, "--help"]).contains("TITLE_OR_NUMBER"));
+    }
 }

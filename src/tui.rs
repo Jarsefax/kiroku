@@ -116,7 +116,7 @@ impl App {
                     }
                     KeyCode::Enter => {
                         let change = match prompt {
-                            Prompt::Add => Change::Add(self.input.clone()),
+                            Prompt::Add => Change::Add(self.input.clone(), Status::Todo),
                             Prompt::Edit(n) => Change::Edit(*n, self.input.clone()),
                             _ => unreachable!(),
                         };
@@ -407,7 +407,7 @@ mod tests {
         let today = Local::now().date_naive();
         store.new_day(today - chrono::Duration::days(3)).unwrap();
         store
-            .change(Change::Add("previous work".into()), None)
+            .change(Change::Add("previous work".into(), Status::Todo), None)
             .unwrap();
         let mut app = app(store.clone());
         press(&mut app, KeyCode::Char('n'));
@@ -470,7 +470,7 @@ mod tests {
         }
         store.new_day(Local::now().date_naive()).unwrap();
         store
-            .change(Change::Add("weekly meeting".into()), None)
+            .change(Change::Add("weekly meeting".into(), Status::Todo), None)
             .unwrap();
         app.reload().unwrap();
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();

@@ -32,7 +32,11 @@ fn reading_empty_store_does_not_create_anything() {
     assert!(view.days.is_empty());
     assert!(view.notice.contains("No recorded days"));
     assert!(!store.dir.exists());
-    assert!(store.change(Change::Add("meeting".into()), None).is_err());
+    assert!(
+        store
+            .change(Change::Add("meeting".into(), Status::Todo), None)
+            .is_err()
+    );
     assert!(store.active().unwrap().is_none());
 }
 
@@ -48,7 +52,7 @@ fn first_day_is_empty_and_starting_again_is_idempotent() {
             .contains("No previous day")
     );
     store
-        .change(Change::Add("weekly meeting".into()), None)
+        .change(Change::Add("weekly meeting".into(), Status::Todo), None)
         .unwrap();
     let before = fs::read(store.dir.join("2026-10.md")).unwrap();
     assert!(!store.new_day(date("2026-10-05")).unwrap());
@@ -60,7 +64,9 @@ fn friday_to_monday_carries_todo_and_doing_but_not_done_across_months() {
     let (_temp, store) = fixture();
     store.new_day(date("2026-07-31")).unwrap();
     for title in ["todo", "in progress", "finished"] {
-        store.change(Change::Add(title.into()), None).unwrap();
+        store
+            .change(Change::Add(title.into(), Status::Todo), None)
+            .unwrap();
     }
     store.change(Change::Move(3, Status::Done), None).unwrap();
     store.change(Change::Move(2, Status::Doing), None).unwrap();
@@ -91,7 +97,7 @@ fn mutations_target_last_started_day_and_duplicate_titles_are_independent() {
     store.new_day(date("2026-10-02")).unwrap();
     for _ in 0..2 {
         store
-            .change(Change::Add("weekly meeting".into()), None)
+            .change(Change::Add("weekly meeting".into(), Status::Todo), None)
             .unwrap();
     }
     store.change(Change::Move(2, Status::Doing), None).unwrap();
@@ -116,7 +122,9 @@ fn mutations_target_last_started_day_and_duplicate_titles_are_independent() {
 fn empty_today_includes_previous_record_with_historical_letters() {
     let (_temp, store) = fixture();
     store.new_day(date("2026-10-02")).unwrap();
-    store.change(Change::Add("finished".into()), None).unwrap();
+    store
+        .change(Change::Add("finished".into(), Status::Todo), None)
+        .unwrap();
     store.change(Change::Move(1, Status::Done), None).unwrap();
     store.new_day(date("2026-10-05")).unwrap();
     let view = listing::select(&store, None, date("2026-10-05")).unwrap();
@@ -185,7 +193,9 @@ fn comments_blank_lines_crlf_and_previous_days_survive_mutations() {
     store
         .change(Change::Edit(1, "möte 日本語".into()), None)
         .unwrap();
-    store.change(Change::Add("new title".into()), None).unwrap();
+    store
+        .change(Change::Add("new title".into(), Status::Todo), None)
+        .unwrap();
     let result = fs::read_to_string(store.dir.join("2026-10.md")).unwrap();
     assert!(result.starts_with(prefix));
     assert!(result.contains("<!-- keep this comment -->\r\n"));
@@ -211,7 +221,9 @@ fn malformed_files_are_never_overwritten() {
         let path = store.dir.join("2026-10.md");
         fs::write(&path, text).unwrap();
         assert!(
-            store.change(Change::Add("new".into()), None).is_err(),
+            store
+                .change(Change::Add("new".into(), Status::Todo), None)
+                .is_err(),
             "{text}"
         );
         assert!(store.new_day(date("2026-10-03")).is_err(), "{text}");
@@ -223,15 +235,17 @@ fn malformed_files_are_never_overwritten() {
 fn bad_numbers_and_titles_do_not_modify_log() {
     let (_temp, store) = fixture();
     store.new_day(date("2026-10-02")).unwrap();
-    store.change(Change::Add("meeting".into()), None).unwrap();
+    store
+        .change(Change::Add("meeting".into(), Status::Todo), None)
+        .unwrap();
     let path = store.dir.join("2026-10.md");
     let before = fs::read(&path).unwrap();
     for change in [
         Change::Remove(0),
         Change::Remove(2),
-        Change::Add(" \t ".into()),
+        Change::Add(" \t ".into(), Status::Todo),
         Change::Edit(1, "two\nlines".into()),
-        Change::Add("bad\u{1b}[2Jtitle".into()),
+        Change::Add("bad\u{1b}[2Jtitle".into(), Status::Todo),
     ] {
         assert!(store.change(change, None).is_err());
         assert_eq!(fs::read(&path).unwrap(), before);
@@ -244,7 +258,9 @@ fn bad_numbers_and_titles_do_not_modify_log() {
 fn stale_tui_snapshot_does_not_edit_the_wrong_item() {
     let (_temp, store) = fixture();
     store.new_day(date("2026-10-02")).unwrap();
-    store.change(Change::Add("meeting".into()), None).unwrap();
+    store
+        .change(Change::Add("meeting".into(), Status::Todo), None)
+        .unwrap();
     let old = store.active().unwrap().unwrap();
     store
         .change(Change::Edit(1, "changed externally".into()), None)
@@ -262,7 +278,7 @@ fn concurrent_additions_are_serialized_without_lost_items() {
             let store = store.clone();
             std::thread::spawn(move || {
                 store
-                    .change(Change::Add(format!("item {i}")), None)
+                    .change(Change::Add(format!("item {i}"), Status::Todo), None)
                     .unwrap()
             })
         })
@@ -326,7 +342,9 @@ fn letter_labels_extend_past_z_and_stay_unique_across_days() {
         store
             .new_day(date("2026-10-01") + Duration::days(n))
             .unwrap();
-        store.change(Change::Add("done".into()), None).unwrap();
+        store
+            .change(Change::Add("done".into(), Status::Todo), None)
+            .unwrap();
         store.change(Change::Move(1, Status::Done), None).unwrap();
     }
     let rendered = listing::render(

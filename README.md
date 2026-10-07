@@ -32,7 +32,9 @@ Run `krk --help` or `krk COMMAND --help` for command help.
 | `krk todo "title"` | Add a todo to the active day |
 | `krk list` | Show today; if empty, also show the previous recorded day |
 | `krk doing NUMBER` | Move an active-day item into Doing |
+| `krk doing "title"` | Add an item directly to Doing |
 | `krk done NUMBER` | Move an active-day item into Done |
+| `krk done "title"` | Add an item directly to Done |
 | `krk todo NUMBER` | Move an active-day item back into To do |
 | `krk edit NUMBER "title"` | Rename an active-day item |
 | `krk remove NUMBER` | Remove an active-day item immediately |
@@ -40,7 +42,7 @@ Run `krk --help` or `krk COMMAND --help` for command help.
 
 All status commands can move an item from any section. Titles must be
 nonempty, single-line text; Unicode and duplicate titles are supported.
-`todo` treats an argument containing only ASCII digits as an item number,
+`todo`, `doing`, and `done` treat an argument containing only ASCII digits as an item number,
 even when quoted; all other text is a new title. Invalid item numbers produce
 an error. Quote titles containing spaces.
 

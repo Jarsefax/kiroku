@@ -50,7 +50,7 @@ meeting" or "monthly op meeting - september".
 - CLI commands select items by a number displayed in `krk list`, allowing
   duplicate titles to be selected separately (for example, `krk doing 3`).
 - Initial commands: `krk new-day`, `krk todo "title"`, `krk list`,
-  `krk doing NUMBER`, `krk done NUMBER`, `krk todo NUMBER`,
+  `krk doing TITLE_OR_NUMBER`, `krk done TITLE_OR_NUMBER`, `krk todo NUMBER`,
   `krk edit NUMBER "title"`, and `krk remove NUMBER`.
 - Running `krk` without a subcommand opens the TUI.
 - Default `krk list` shows today's items. If today's recorded day is empty,

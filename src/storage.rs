@@ -257,7 +257,7 @@ impl Document {
 
 #[derive(Clone, Debug)]
 pub enum Change {
-    Add(String),
+    Add(String, Status),
     Move(usize, Status),
     Edit(usize, String),
     Remove(usize),
@@ -449,8 +449,8 @@ impl Store {
             );
         }
         match change {
-            Change::Add(title) => {
-                document.insert_item(day_index, Status::Todo, validate_title(&title)?)
+            Change::Add(title, status) => {
+                document.insert_item(day_index, status, validate_title(&title)?)
             }
             change => {
                 let number = match &change {
