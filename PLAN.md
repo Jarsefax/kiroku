@@ -49,7 +49,7 @@ meeting" or "monthly op meeting - september".
 - Preserve previous days' records when copying unfinished items forward.
 - CLI commands select items by a number displayed in `krk list`, allowing
   duplicate titles to be selected separately (for example, `krk doing 3`).
-- Initial commands: `krk new-day`, `krk add "title"`, `krk list`,
+- Initial commands: `krk new-day`, `krk todo "title"`, `krk list`,
   `krk doing NUMBER`, `krk done NUMBER`, `krk todo NUMBER`,
   `krk edit NUMBER "title"`, and `krk remove NUMBER`.
 - Running `krk` without a subcommand opens the TUI.

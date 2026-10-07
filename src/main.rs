@@ -35,8 +35,6 @@ struct Args {
 enum Command {
     /// Explicitly start today and carry unfinished items into To do
     NewDay,
-    /// Add a short title to the active day's To do section
-    Add { title: String },
     /// List today, a relative period, a date, or an inclusive FROM..TO range
     List {
         #[arg(
@@ -49,8 +47,11 @@ enum Command {
     Doing { number: usize },
     /// Move an active-day item into Done
     Done { number: usize },
-    /// Move an active-day item back into To do
-    Todo { number: usize },
+    /// Add a title, or move a numbered active-day item back into To do
+    Todo {
+        #[arg(value_name = "TITLE_OR_NUMBER")]
+        value: String,
+    },
     /// Rename an active-day item
     Edit { number: usize, title: String },
     /// Remove an active-day item
@@ -94,10 +95,18 @@ fn run() -> Result<()> {
                 today,
             ));
         }
-        Some(Command::Add { title }) => Change::Add(title),
         Some(Command::Doing { number }) => Change::Move(number, Status::Doing),
         Some(Command::Done { number }) => Change::Move(number, Status::Done),
-        Some(Command::Todo { number }) => Change::Move(number, Status::Todo),
+        Some(Command::Todo { value }) => {
+            if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+                Change::Move(
+                    value.parse().context("Item number is too large")?,
+                    Status::Todo,
+                )
+            } else {
+                Change::Add(value)
+            }
+        }
         Some(Command::Edit { number, title }) => Change::Edit(number, title),
         Some(Command::Remove { number }) => Change::Remove(number),
     };
