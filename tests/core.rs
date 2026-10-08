@@ -13,6 +13,36 @@ fn fixture() -> (tempfile::TempDir, Store) {
     let store = Store::new(temp.path().join("logs"));
     (temp, store)
 }
+
+#[test]
+fn storage_changes_and_same_month_rollover_back_up_previous_bytes() {
+    let (_temp, store) = fixture();
+    store.new_day(date("2026-10-05")).unwrap();
+    let path = store.dir.join("2026-10.md");
+    assert!(!store.dir.join("backups").exists());
+    let first = fs::read(&path).unwrap();
+    store
+        .change(Change::Add("meeting".into(), Status::Todo), None)
+        .unwrap();
+    assert_eq!(
+        fs::read(store.dir.join("backups/2026-10.md.000001.bak")).unwrap(),
+        first
+    );
+    let previous = fs::read(&path).unwrap();
+    store.new_day(date("2026-10-06")).unwrap();
+    assert_eq!(
+        fs::read(store.dir.join("backups/2026-10.md.000002.bak")).unwrap(),
+        previous
+    );
+    let count = fs::read_dir(store.dir.join("backups")).unwrap().count();
+    listing::select(&store, Some("month"), date("2026-10-06")).unwrap();
+    assert!(!store.new_day(date("2026-10-06")).unwrap());
+    store.change(Change::Move(1, Status::Todo), None).unwrap();
+    assert_eq!(
+        fs::read_dir(store.dir.join("backups")).unwrap().count(),
+        count
+    );
+}
 fn titles(store: &Store) -> Vec<(String, Status)> {
     store
         .active()
@@ -287,6 +317,15 @@ fn concurrent_additions_are_serialized_without_lost_items() {
         thread.join().unwrap();
     }
     assert_eq!(titles(&store).len(), 12);
+    assert_eq!(fs::read_dir(store.dir.join("backups")).unwrap().count(), 5);
+    let newest = fs::read_to_string(store.dir.join("backups/2026-10.md.000012.bak")).unwrap();
+    assert_eq!(
+        newest
+            .lines()
+            .filter(|line| line.starts_with("- item "))
+            .count(),
+        11
+    );
 }
 
 #[test]

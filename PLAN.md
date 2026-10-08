@@ -108,6 +108,16 @@ These defaults were adopted for the first implementation.
   Titles are nonempty single-line text; Unicode and duplicate titles work.
 - Use atomic file replacement and serialize app writes with a directory lock.
   Reject stale TUI item selections after external edits and provide reload.
+- Before replacing an existing monthly file, save and flush its exact previous
+  contents in `backups/YYYY-MM.md.NUMBER.bak`. Retain five versions per month,
+  pruning only after the new log and its directory are successfully flushed.
+  Abort the update if backup creation fails. Failed saves may retain extras.
+- Distinguish failures before replacement from failures after the update is
+  visible. After a failed final directory flush, explain the uncertain
+  durability and instruct the user to inspect before retrying. A cleanup
+  failure reports that the update succeeded. Show full TUI errors in a popup.
+- Test partial writes, flush failures, replacement failures, backup retention,
+  and cleanup failures through injectable IO operations.
 - TUI: arrows/jk select items, arrows/hl browse days, a adds, s/d/t change
   status, e edits, x removes, n starts today, r reloads, ? shows help, q quits.
   Enter saves a title prompt; Esc cancels; Backspace edits; Ctrl-U clears.

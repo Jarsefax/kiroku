@@ -42,6 +42,7 @@ struct App {
     prompt: Option<Prompt>,
     input: String,
     help: bool,
+    error_popup: Option<String>,
     list_state: ListState,
 }
 
@@ -82,6 +83,14 @@ impl App {
     fn key(&mut self, key: KeyEvent) -> Result<bool> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Ok(true);
+        }
+        if self.error_popup.is_some() {
+            match key.code {
+                KeyCode::Char('q') => return Ok(true),
+                KeyCode::Enter | KeyCode::Esc => self.error_popup = None,
+                _ => (),
+            }
+            return Ok(false);
         }
         if let Some(prompt) = &self.prompt {
             if let Prompt::Remove(number) = prompt {
@@ -302,6 +311,15 @@ impl App {
             };
             popup(frame, area, title, &text, 6);
         }
+        if let Some(error) = &self.error_popup {
+            popup(
+                frame,
+                area,
+                " Error — Enter/Esc closes; q quits ",
+                error,
+                16,
+            );
+        }
     }
 }
 
@@ -337,6 +355,7 @@ pub fn run(store: Store) -> Result<()> {
         prompt: None,
         input: String::new(),
         help: false,
+        error_popup: None,
         list_state: ListState::default(),
     };
     app.reload()?;
@@ -363,8 +382,10 @@ pub fn run(store: Store) -> Result<()> {
                         app.input.clear();
                         // A stale selection must not be reused after an external change.
                         if let Err(error) = app.reload() {
-                            app.message = format!("{error:#}");
+                            app.message
+                                .push_str(&format!("; could not reload: {error:#}"));
                         }
+                        app.error_popup = Some(app.message.clone());
                     }
                 }
             }
@@ -390,6 +411,7 @@ mod tests {
             prompt: None,
             input: String::new(),
             help: false,
+            error_popup: None,
             list_state: ListState::default(),
         };
         app.reload().unwrap();
@@ -467,6 +489,12 @@ mod tests {
             app.prompt = Some(Prompt::Add);
             terminal.draw(|frame| app.draw(frame)).unwrap();
             app.prompt = None;
+            app.error_popup = Some(
+                "Update is already visible. Do not repeat the command; inspect the file first."
+                    .into(),
+            );
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            app.error_popup = None;
         }
         store.new_day(Local::now().date_naive()).unwrap();
         store
@@ -484,5 +512,43 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("weekly meeting"));
         assert!(rendered.contains("active"));
+    }
+
+    #[test]
+    fn recovery_popup_is_visible_and_blocks_edits_until_dismissed() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        store.new_day(Local::now().date_naive()).unwrap();
+        store
+            .change(Change::Add("meeting".into(), Status::Todo), None)
+            .unwrap();
+        let mut app = app(store.clone());
+        app.error_popup = Some(
+            "Update is already visible. Do not blindly repeat the command; inspect the file first."
+                .into(),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("Update is already visible"));
+        assert!(text.contains("Do not blindly repeat"));
+        press(&mut app, KeyCode::Char('d'));
+        assert_eq!(
+            store.active().unwrap().unwrap().items[0].status,
+            Status::Todo
+        );
+        press(&mut app, KeyCode::Enter);
+        assert!(app.error_popup.is_none());
+        press(&mut app, KeyCode::Char('d'));
+        assert_eq!(
+            store.active().unwrap().unwrap().items[0].status,
+            Status::Done
+        );
     }
 }

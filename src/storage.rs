@@ -3,7 +3,6 @@ use chrono::{Datelike, NaiveDate};
 use fs2::FileExt;
 use std::{
     fs::{self, File, OpenOptions},
-    io::Write,
     path::PathBuf,
 };
 
@@ -232,26 +231,7 @@ impl Document {
     }
 
     fn save(&self) -> Result<()> {
-        match (&self.original, fs::read_to_string(&self.path)) {
-            (Some(old), Ok(current)) if old == &current => (),
-            (None, Err(e)) if e.kind() == std::io::ErrorKind::NotFound => (),
-            _ => bail!(
-                "{} changed while Kiroku was editing it; retry after reviewing the file",
-                self.path.display()
-            ),
-        }
-        let parent = self.path.parent().context("Missing log directory")?;
-        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-        if self.original.is_some() {
-            temporary
-                .as_file()
-                .set_permissions(fs::metadata(&self.path)?.permissions())?;
-        }
-        temporary.write_all(self.lines.concat().as_bytes())?;
-        temporary.as_file().sync_all()?;
-        temporary.persist(&self.path).map_err(|e| e.error)?;
-        File::open(parent)?.sync_all()?;
-        Ok(())
+        crate::persistence::save(&self.path, self.original.as_deref(), &self.lines.concat())
     }
 }
 

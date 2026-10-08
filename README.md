@@ -135,6 +135,44 @@ before it can change a different item. Avoid saving from an external editor
 at exactly the same time as an app write; external editors do not use the
 app's lock.
 
+### Backups and failed saves
+
+Before replacing an existing monthly file, Kiroku saves its exact previous
+contents in `backups/` inside the data directory, for example:
+
+```text
+kiroku/
+  2026-10.md
+  backups/
+    2026-10.md.000001.bak
+    2026-10.md.000002.bak
+```
+
+The highest version number is the newest backup. These are ordinary text
+files, preserving comments, whitespace, line endings, and file permissions.
+After a successful update, Kiroku keeps the newest **five versions per
+monthly file**. It does not back up a new file with no previous contents,
+read-only commands, or operations that make no change.
+
+The updated file and backup are flushed before the live log is replaced.
+If backup creation fails, the update is aborted. Failures before replacement
+leave the live file unchanged. Backups are pruned only after the updated log
+and its directory have been flushed; failed saves can leave extra versions.
+
+If replacement succeeds but the final directory flush fails, the error says
+the update is **already visible**, but its persistence after a crash is
+uncertain. Inspect the file or run `krk list` before retrying: repeating an
+add/remove command could change the data twice. A backup cleanup failure
+explicitly says the update was saved successfully and must not be repeated.
+The TUI displays full errors in a popup; Enter/Esc closes it.
+
+To recover, close the TUI and compare the monthly file with its backups in a
+text editor. Copy the chosen backup's contents into the original monthly
+file, keeping the original `YYYY-MM.md` filename. Kiroku never automatically
+restores a backup over a live log. Backups on the same disk protect against
+failed updates and unwanted changes, but are not a replacement for an
+independent backup of the directory.
+
 Optional settings live in **`~/.config/kiroku/config.toml`**, or
 `$XDG_CONFIG_HOME/kiroku/config.toml` when that variable is an absolute path.
 No config file is required.
@@ -187,4 +225,7 @@ cargo test --locked
 Tests cover rollover across weekends/months, numbered duplicate titles,
 date selection and list fallback, manual comments and CRLF preservation,
 malformed-file protection, stale selections, concurrent writes, configuration,
-CLI workflows, and TUI keyboard/render behavior.
+CLI workflows, and TUI keyboard/render behavior. Save tests inject partial
+writes, file/directory flush failures, replacement failures, and backup
+cleanup failures, and verify the original or applied update survives as
+appropriate.
