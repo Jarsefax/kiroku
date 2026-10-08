@@ -106,6 +106,43 @@ fn versions(directory: &Path, name: &str) -> Result<Vec<(u64, PathBuf)>> {
     Ok(result)
 }
 
+fn closed_month_backups(directory: &Path, parent: &Path, current: &str) -> Result<Vec<PathBuf>> {
+    let mut result = vec![];
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let filename = entry.file_name();
+        let Some((name, number)) = filename
+            .to_str()
+            .and_then(|s| s.strip_suffix(".bak"))
+            .and_then(|s| s.rsplit_once('.'))
+        else {
+            continue;
+        };
+        if !name.is_ascii()
+            || name.len() != 10
+            || !name.ends_with(".md")
+            || name >= current
+            || crate::storage::parse_date(&format!("{}-01", &name[..7])).is_err()
+            || number.is_empty()
+            || !number.bytes().all(|b| b.is_ascii_digit())
+        {
+            continue;
+        }
+        // A missing original may need recovery. Do not follow symlinks or
+        // delete anything other than ordinary backup files.
+        match fs::symlink_metadata(parent.join(name)) {
+            Ok(metadata) if metadata.is_file() => {}
+            Ok(_) => continue,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e).context("Cannot check closed monthly log"),
+        }
+        if entry.file_type()?.is_file() {
+            result.push(entry.path());
+        }
+    }
+    Ok(result)
+}
+
 pub(crate) fn save(path: &Path, original: Option<&str>, content: &str) -> Result<()> {
     save_with(&Disk, path, original, content)
 }
@@ -121,7 +158,7 @@ fn save_with(
     }
     let parent = path.parent().context("Missing log directory")?;
     // All failures in this block happen before replacement of the live log.
-    let preparation = || -> Result<Option<PathBuf>> {
+    let preparation = || -> Result<()> {
         check_original(path, original)?;
         let permissions = if original.is_some() {
             Some(fs::metadata(path)?.permissions())
@@ -138,7 +175,7 @@ fn save_with(
         ops.flush(Stage::FlushLog, &temporary)
             .context("Cannot flush updated log")?;
 
-        let backup_directory = if let Some(old) = original {
+        if let Some(old) = original {
             let directory = parent.join("backups");
             fs::create_dir_all(&directory).context("Cannot create backup directory")?;
             let name = path
@@ -168,19 +205,16 @@ fn save_with(
             // is durably linked before replacing any original log.
             ops.flush_directory(Stage::FlushBackupParent, parent)
                 .context("Cannot flush backup directory's parent")?;
-            Some(directory)
-        } else {
-            None
-        };
+        }
 
         // Backup preparation takes time; recheck for external edits immediately
         // before committing. Editors still need to avoid simultaneous saves.
         check_original(path, original)?;
         ops.replace(Stage::ReplaceLog, temporary, path)
             .context("Cannot replace log")?;
-        Ok(backup_directory)
+        Ok(())
     };
-    let backup_directory = preparation().with_context(|| {
+    preparation().with_context(|| {
         format!(
             "Save aborted before replacement; Kiroku did not change {}",
             path.display()
@@ -194,26 +228,31 @@ fn save_with(
 
     // Only prune after a successful, flushed log replacement. A failed save
     // may retain extra backups rather than risking deletion of recovery data.
-    if let Some(directory) = backup_directory {
-        let cleanup = || -> Result<()> {
+    let cleanup = || -> Result<()> {
+        let directory = parent.join("backups");
+        if directory.try_exists()? {
             let name = path
                 .file_name()
                 .and_then(|s| s.to_str())
                 .context("Invalid log filename")?;
             let previous = versions(&directory, name)?;
             let remove_count = previous.len().saturating_sub(BACKUPS_TO_KEEP);
+            let closed = closed_month_backups(&directory, parent, name)?;
             for (_, backup) in previous.iter().take(remove_count) {
                 ops.remove(Stage::PruneBackup, backup)?;
             }
-            if remove_count > 0 {
+            for backup in &closed {
+                ops.remove(Stage::PruneBackup, backup)?;
+            }
+            if remove_count > 0 || !closed.is_empty() {
                 ops.flush_directory(Stage::FlushPrunedDirectory, &directory)?;
             }
-            Ok(())
-        };
-        cleanup().with_context(|| format!(
-            "Update was saved successfully to {}, but backup cleanup failed. Do not repeat the command; inspect backups/ (extra versions may remain)", path.display()
-        ))?;
-    }
+        }
+        Ok(())
+    };
+    cleanup().with_context(|| format!(
+        "Update was saved successfully to {}, but backup cleanup failed. Do not repeat the command; inspect backups/ (extra versions may remain)", path.display()
+    ))?;
     Ok(())
 }
 
@@ -365,7 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn successful_saves_keep_exact_previous_contents_and_five_versions_per_month() {
+    fn successful_saves_keep_exact_previous_contents_and_five_versions_for_active_month() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("2026-10.md");
         save(&path, None, "version 0\r\n<!-- note -->\r\n").unwrap();
@@ -390,9 +429,137 @@ mod tests {
         }
         let other = temp.path().join("2026-11.md");
         save(&other, None, "other old").unwrap();
+        assert!(versions(&directory, "2026-10.md").unwrap().is_empty());
+        assert_eq!(fs::read_to_string(&path).unwrap(), previous);
         save(&other, Some("other old"), "other new").unwrap();
-        assert_eq!(versions(&directory, "2026-10.md").unwrap().len(), 5);
+        assert!(versions(&directory, "2026-10.md").unwrap().is_empty());
         assert_eq!(versions(&directory, "2026-11.md").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn failed_month_rollover_keeps_closed_month_backups() {
+        for stage in [
+            Stage::WriteLog,
+            Stage::FlushLog,
+            Stage::ReplaceLog,
+            Stage::FlushLogDirectory,
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let old = temp.path().join("2026-10.md");
+            save(&old, None, "old version").unwrap();
+            save(&old, Some("old version"), "closed month").unwrap();
+            let next = temp.path().join("2026-11.md");
+            let ops = fault(stage);
+            assert!(save_with(&ops, &next, None, "new month").is_err());
+            assert!(ops.seen.borrow().contains(&stage));
+            assert!(!ops.seen.borrow().contains(&Stage::PruneBackup));
+            assert_eq!(fs::read_to_string(&old).unwrap(), "closed month");
+            assert_eq!(
+                fs::read_to_string(temp.path().join("backups/2026-10.md.000001.bak")).unwrap(),
+                "old version"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_update_to_older_month_recreates_backup_after_rollover_cleanup() {
+        for stage in [Stage::ReplaceLog, Stage::FlushLogDirectory] {
+            let temp = tempfile::tempdir().unwrap();
+            let old = temp.path().join("2026-10.md");
+            save(&old, None, "first version").unwrap();
+            save(&old, Some("first version"), "closed month\r\n").unwrap();
+            save(&temp.path().join("2026-11.md"), None, "new month").unwrap();
+            let directory = temp.path().join("backups");
+            assert!(versions(&directory, "2026-10.md").unwrap().is_empty());
+
+            let ops = fault(stage);
+            assert!(save_with(&ops, &old, Some("closed month\r\n"), "edited month").is_err());
+            assert!(ops.seen.borrow().contains(&stage));
+            let seen = ops.seen.borrow();
+            assert!(
+                seen.iter()
+                    .position(|s| *s == Stage::FlushBackupDirectory)
+                    .unwrap()
+                    < seen.iter().position(|s| *s == Stage::ReplaceLog).unwrap()
+            );
+            assert_eq!(
+                fs::read(directory.join("2026-10.md.000001.bak")).unwrap(),
+                b"closed month\r\n"
+            );
+            assert_eq!(
+                fs::read_to_string(&old).unwrap(),
+                if stage == Stage::ReplaceLog {
+                    "closed month\r\n"
+                } else {
+                    "edited month"
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn closed_month_cleanup_preserves_recovery_and_unrelated_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("backups");
+        fs::create_dir(&directory).unwrap();
+        for name in ["2025-10.md", "2025-12.md", "2026-02.md", "2025-13.md"] {
+            fs::write(temp.path().join(name), "original").unwrap();
+        }
+        let retained = [
+            "2025-11.md.000001.bak", // Missing original.
+            "2026-02.md.000001.bak", // Later month.
+            "2025-13.md.000001.bak", // Invalid month.
+            "2025-12.md.notes.bak",  // Not a version.
+            "2025-12.md..bak",       // Empty version.
+            "notes.000001.bak",      // Unrelated file.
+        ];
+        for name in retained {
+            fs::write(directory.join(name), "keep").unwrap();
+        }
+        for name in ["2025-10.md.000001.bak", "2025-12.md.000001.bak"] {
+            fs::write(directory.join(name), "old backup").unwrap();
+        }
+        // A directory with a backup-like name must not be removed.
+        fs::create_dir(directory.join("2025-12.md.000002.bak")).unwrap();
+        save(&temp.path().join("2026-01.md"), None, "new year").unwrap();
+        for name in retained {
+            assert_eq!(fs::read_to_string(directory.join(name)).unwrap(), "keep");
+        }
+        for name in ["2025-10.md.000001.bak", "2025-12.md.000001.bak"] {
+            assert!(!directory.join(name).exists());
+        }
+        assert!(directory.join("2025-12.md.000002.bak").is_dir());
+        for name in ["2025-10.md", "2025-12.md"] {
+            assert_eq!(
+                fs::read_to_string(temp.path().join(name)).unwrap(),
+                "original"
+            );
+        }
+    }
+
+    #[test]
+    fn rollover_cleanup_failure_reports_saved_update_and_next_write_retries_cleanup() {
+        for stage in [Stage::PruneBackup, Stage::FlushPrunedDirectory] {
+            let temp = tempfile::tempdir().unwrap();
+            let old = temp.path().join("2026-10.md");
+            save(&old, None, "old version").unwrap();
+            save(&old, Some("old version"), "closed month").unwrap();
+            let next = temp.path().join("2026-11.md");
+            let ops = fault(stage);
+            let error = save_with(&ops, &next, None, "new month").unwrap_err();
+            assert!(format!("{error:#}").contains("Update was saved successfully"));
+            assert!(format!("{error:#}").contains("Do not repeat the command"));
+            assert!(ops.seen.borrow().contains(&stage));
+            assert_eq!(fs::read_to_string(&next).unwrap(), "new month");
+            assert_eq!(fs::read_to_string(&old).unwrap(), "closed month");
+            save(&next, Some("new month"), "updated month").unwrap();
+            let directory = temp.path().join("backups");
+            assert!(versions(&directory, "2026-10.md").unwrap().is_empty());
+            assert_eq!(
+                fs::read_to_string(directory.join("2026-11.md.000001.bak")).unwrap(),
+                "new month"
+            );
+        }
     }
 
     #[test]

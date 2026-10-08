@@ -110,6 +110,15 @@ fn friday_to_monday_carries_todo_and_doing_but_not_done_across_months() {
         ]
     );
     assert_eq!(fs::read(store.dir.join("2026-07.md")).unwrap(), friday);
+    assert_eq!(fs::read_dir(store.dir.join("backups")).unwrap().count(), 0);
+    let monday = fs::read(store.dir.join("2026-08.md")).unwrap();
+    store
+        .change(Change::Add("new month item".into(), Status::Todo), None)
+        .unwrap();
+    assert_eq!(
+        fs::read(store.dir.join("backups/2026-08.md.000001.bak")).unwrap(),
+        monday
+    );
     assert_eq!(
         store
             .days(None)

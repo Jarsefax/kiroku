@@ -150,9 +150,19 @@ kiroku/
 
 The highest version number is the newest backup. These are ordinary text
 files, preserving comments, whitespace, line endings, and file permissions.
-After a successful update, Kiroku keeps the newest **five versions per
-monthly file**. It does not back up a new file with no previous contents,
-read-only commands, or operations that make no change.
+After a successful update, Kiroku keeps the newest **five versions for the
+active monthly file**. When saving into a later month, it removes backups
+for earlier months whose original files still exist as regular files. The
+original monthly files are kept unchanged. Backups with missing originals
+are kept for recovery, as are unrelated files in `backups/`. Cleanup also
+runs on later updates, so backups left from earlier months are removed on
+the next successful write. It does not back up a new file with no previous
+contents, read-only commands, or operations that make no change.
+
+The active file can still belong to a previous calendar month until you
+start a new day in a later month. Commands editing that active day create
+backups as usual. Every replacement of an existing monthly file creates a
+backup first, regardless of the file's month or earlier backup cleanup.
 
 The updated file and backup are flushed before the live log is replaced.
 If backup creation fails, the update is aborted. Failures before replacement

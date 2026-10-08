@@ -1,4 +1,4 @@
-use chrono::Local;
+use chrono::{Datelike, Local};
 use kiroku::storage::{Status, Store};
 use std::{
     fs,
@@ -157,5 +157,69 @@ fn every_status_command_adds_titles_and_moves_existing_items() {
         assert!(!run(logs, &[command]).status.success());
         assert_eq!(fs::read(&path).unwrap(), before);
         assert!(success(logs, &[command, "--help"]).contains("TITLE_OR_NUMBER"));
+    }
+}
+
+#[test]
+fn previous_month_edit_commands_back_up_original_or_abort_if_backup_unavailable() {
+    let previous_month = Local::now()
+        .date_naive()
+        .with_day(1)
+        .unwrap()
+        .pred_opt()
+        .unwrap();
+    let name = format!("{}.md", previous_month.format("%Y-%m"));
+    for args in [
+        &["todo", "new todo"][..],
+        &["doing", "new doing"],
+        &["done", "new done"],
+        &["todo", "1"],
+        &["doing", "1"],
+        &["done", "1"],
+        &["edit", "1", "renamed"],
+        &["remove", "1"],
+    ] {
+        for backup_unavailable in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let logs = temp.path();
+            let path = logs.join(&name);
+            let (todo, doing) = if args == ["todo", "1"] {
+                ("", "- existing item\r\n")
+            } else {
+                ("- existing item\r\n", "")
+            };
+            let original = format!(
+                "<!-- preserve exact bytes -->\r\n# {previous_month}\r\n\r\n## To do\r\n{todo}\r\n## Doing\r\n{doing}\r\n## Done\r\n"
+            );
+            fs::write(&path, &original).unwrap();
+            if backup_unavailable {
+                fs::write(logs.join("backups"), "not a directory").unwrap();
+                let result = run(logs, args);
+                assert!(!result.status.success(), "{args:?}");
+                assert!(
+                    String::from_utf8_lossy(&result.stderr)
+                        .contains("Save aborted before replacement"),
+                    "{args:?}: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                assert_eq!(fs::read(&path).unwrap(), original.as_bytes(), "{args:?}");
+            } else {
+                success(logs, args);
+                assert_eq!(
+                    fs::read(logs.join("backups").join(format!("{name}.000001.bak"))).unwrap(),
+                    original.as_bytes(),
+                    "{args:?}"
+                );
+                assert_ne!(fs::read(&path).unwrap(), original.as_bytes(), "{args:?}");
+            }
+            assert_eq!(
+                Store::new(logs.to_path_buf())
+                    .active()
+                    .unwrap()
+                    .unwrap()
+                    .date,
+                previous_month
+            );
+        }
     }
 }
