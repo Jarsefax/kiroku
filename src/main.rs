@@ -42,6 +42,30 @@ enum Command {
             help = "today | yesterday | week | month | YYYY-MM-DD | FROM..TO"
         )]
         period: Option<String>,
+        #[arg(
+            long,
+            value_name = "TEXT",
+            help = "Match title text, ignoring case; searches all history unless PERIOD is given"
+        )]
+        search: Option<String>,
+        #[arg(
+            long,
+            value_enum,
+            help = "Show only this status; searches all history unless PERIOD is given"
+        )]
+        status: Option<CliStatus>,
+    },
+    /// Search titles across all recorded days, or within a selected period
+    Search {
+        #[arg(value_name = "TEXT")]
+        query: String,
+        #[arg(
+            value_name = "PERIOD",
+            help = "today | yesterday | week | month | YYYY-MM-DD | FROM..TO"
+        )]
+        period: Option<String>,
+        #[arg(long, value_enum)]
+        status: Option<CliStatus>,
     },
     /// Add a title, or move a numbered active-day item into Doing
     Doing {
@@ -73,7 +97,7 @@ enum Command {
             default_value = "todo",
             help = "Status of the new copy"
         )]
-        status: RepeatStatus,
+        status: CliStatus,
     },
     /// Rename an active-day item
     Edit { number: usize, title: String },
@@ -84,18 +108,18 @@ enum Command {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
-enum RepeatStatus {
+enum CliStatus {
     Todo,
     Doing,
     Done,
 }
 
-impl From<RepeatStatus> for Status {
-    fn from(status: RepeatStatus) -> Self {
+impl From<CliStatus> for Status {
+    fn from(status: CliStatus) -> Self {
         match status {
-            RepeatStatus::Todo => Self::Todo,
-            RepeatStatus::Doing => Self::Doing,
-            RepeatStatus::Done => Self::Done,
+            CliStatus::Todo => Self::Todo,
+            CliStatus::Doing => Self::Doing,
+            CliStatus::Done => Self::Done,
         }
     }
 }
@@ -129,6 +153,18 @@ fn updated(day: Day, today: chrono::NaiveDate) -> Result<()> {
     ))
 }
 
+fn filtered_list(
+    store: &Store,
+    period: Option<&str>,
+    query: &str,
+    status: Option<CliStatus>,
+    today: chrono::NaiveDate,
+) -> Result<()> {
+    let filter = listing::Filter::new(query, status.map(Into::into))?;
+    let view = listing::select_filtered(store, period, today, &filter)?;
+    output(&listing::render_filtered(&view, today, &filter))
+}
+
 fn run() -> Result<()> {
     let args = Args::parse();
     let store = Store::new(config::resolve(args.data_dir.as_deref())?);
@@ -136,7 +172,27 @@ fn run() -> Result<()> {
     let change = match args.command {
         None => return tui::run(store),
         Some(Command::Path) => return output(&format!("{}\n", store.dir.display())),
-        Some(Command::List { period }) => {
+        Some(Command::Search {
+            query,
+            period,
+            status,
+        }) => {
+            return filtered_list(&store, period.as_deref(), &query, status, today);
+        }
+        Some(Command::List {
+            period,
+            search,
+            status,
+        }) => {
+            if search.is_some() || status.is_some() {
+                return filtered_list(
+                    &store,
+                    period.as_deref(),
+                    search.as_deref().unwrap_or(""),
+                    status,
+                    today,
+                );
+            }
             return output(&listing::render(
                 &listing::select(&store, period.as_deref(), today)?,
                 today,

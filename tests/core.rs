@@ -276,6 +276,93 @@ fn reading_empty_store_does_not_create_anything() {
 }
 
 #[test]
+fn filtered_results_keep_source_references_and_combine_text_status_and_dates() {
+    let (_temp, store) = fixture();
+    store.new_day(date("2026-09-30")).unwrap();
+    store
+        .change(Change::Add("unrelated".into(), Status::Todo), None)
+        .unwrap();
+    store
+        .change(Change::Add("another thing".into(), Status::Doing), None)
+        .unwrap();
+    store
+        .change(Change::Add("Weekly meeting".into(), Status::Done), None)
+        .unwrap();
+    store
+        .change(Change::Add("weekly meeting".into(), Status::Done), None)
+        .unwrap();
+    store.new_day(date("2026-10-01")).unwrap();
+    store
+        .change(Change::Add("WEEKLY meeting".into(), Status::Done), None)
+        .unwrap();
+    store.new_day(date("2026-10-02")).unwrap();
+    store
+        .change(
+            Change::Add("weekly meeting draft".into(), Status::Doing),
+            None,
+        )
+        .unwrap();
+    store
+        .change(Change::Add("weekly meeting".into(), Status::Done), None)
+        .unwrap();
+    let original = fs::read(store.dir.join("2026-10.md")).unwrap();
+    let backups = fs::read_dir(store.dir.join("backups")).unwrap().count();
+    let filter = listing::Filter::new("  MeEtInG  ", Some(Status::Done)).unwrap();
+    let view = listing::select_filtered(&store, None, date("2026-10-03"), &filter).unwrap();
+    assert_eq!(view.days.len(), 3);
+    assert_eq!(view.days[0].items.len(), 4); // Complete sources, not renumbered matches.
+    let text = listing::render_filtered(&view, date("2026-10-03"), &filter);
+    assert!(text.contains("4 matching items"));
+    assert!(text.contains("C. Weekly meeting"));
+    assert!(text.contains("D. weekly meeting"));
+    assert!(text.contains("C. WEEKLY meeting"));
+    assert!(text.contains("4. weekly meeting"));
+    assert!(!text.contains("draft"));
+    assert!(!text.contains("unrelated"));
+    assert!(text.contains("make today active"));
+    let scoped = listing::select_filtered(
+        &store,
+        Some("2026-10-01..2026-10-02"),
+        date("2026-10-03"),
+        &filter,
+    )
+    .unwrap();
+    assert_eq!(scoped.days.len(), 2);
+    let none =
+        listing::select_filtered(&store, Some("2026-10-03"), date("2026-10-03"), &filter).unwrap();
+    assert!(none.days.is_empty());
+    assert!(
+        listing::render_filtered(&none, date("2026-10-03"), &filter).contains("No matching items")
+    );
+    let status_only = listing::Filter::new("", Some(Status::Doing)).unwrap();
+    assert_eq!(
+        listing::select_filtered(&store, None, date("2026-10-03"), &status_only)
+            .unwrap()
+            .days
+            .len(),
+        2
+    );
+    assert_eq!(fs::read(store.dir.join("2026-10.md")).unwrap(), original);
+    assert_eq!(
+        fs::read_dir(store.dir.join("backups")).unwrap().count(),
+        backups
+    );
+}
+
+#[test]
+fn filtering_empty_logs_is_read_only_and_search_rejects_control_characters() {
+    let (_temp, store) = fixture();
+    let filter = listing::Filter::new("möte 日本語", None).unwrap();
+    let view = listing::select_filtered(&store, None, date("2026-10-03"), &filter).unwrap();
+    assert!(view.days.is_empty());
+    assert!(view.notice.contains("No matching items"));
+    assert!(!store.dir.exists());
+    for query in ["bad\ntext", "bad\ttext", "\u{1b}[2J"] {
+        assert!(listing::Filter::new(query, None).is_err());
+    }
+}
+
+#[test]
 fn first_day_is_empty_and_starting_again_is_idempotent() {
     let (_temp, store) = fixture();
     assert!(store.new_day(date("2026-10-05")).unwrap());

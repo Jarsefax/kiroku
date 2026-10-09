@@ -1,4 +1,4 @@
-use crate::storage::{Day, Status, Store, parse_date};
+use crate::storage::{Day, Item, Status, Store, parse_date};
 use anyhow::{Context, Result, bail, ensure};
 use chrono::{Datelike, Duration, NaiveDate};
 use std::fmt::Write;
@@ -7,6 +7,64 @@ pub struct View {
     pub days: Vec<Day>,
     pub active: Option<NaiveDate>,
     pub notice: String,
+}
+
+#[derive(Clone, Default)]
+pub struct Filter {
+    pub query: String,
+    pub status: Option<Status>,
+}
+
+impl Filter {
+    pub fn new(query: &str, status: Option<Status>) -> Result<Self> {
+        ensure!(
+            !query.chars().any(char::is_control),
+            "Search text must be a single line without control characters"
+        );
+        Ok(Self {
+            query: query.trim().to_lowercase(),
+            status,
+        })
+    }
+
+    pub fn matches(&self, item: &Item) -> bool {
+        self.status.is_none_or(|status| status == item.status)
+            && item.title.to_lowercase().contains(&self.query)
+    }
+}
+
+/// Keep complete source days so filtered results retain their original labels.
+pub fn select_filtered(
+    store: &Store,
+    selector: Option<&str>,
+    today: NaiveDate,
+    filter: &Filter,
+) -> Result<View> {
+    let active = store.active()?.map(|day| day.date);
+    let mut days = store.days(selector.map(|text| range(text, today)).transpose()?)?;
+    days.retain(|day| day.items.iter().any(|item| filter.matches(item)));
+    let count = days
+        .iter()
+        .flat_map(|day| &day.items)
+        .filter(|item| filter.matches(item))
+        .count();
+    let mut notice = if count == 0 {
+        "No matching items.".to_owned()
+    } else {
+        let noun = if count == 1 { "item" } else { "items" };
+        format!("{count} matching {noun}. Historical letters are scoped to each date.")
+    };
+    if let Some(active) = active {
+        let _ = write!(notice, "\nCopies go to active day {active}.");
+        if active != today {
+            notice.push_str(" Run `krk new-day` to make today active.");
+        }
+    }
+    Ok(View {
+        days,
+        active,
+        notice,
+    })
 }
 
 pub fn range(selector: &str, today: NaiveDate) -> Result<(NaiveDate, NaiveDate)> {
@@ -121,6 +179,14 @@ pub fn letter_number(label: &str) -> Result<usize> {
 }
 
 pub fn render(view: &View, today: NaiveDate) -> String {
+    render_view(view, today, None)
+}
+
+pub fn render_filtered(view: &View, today: NaiveDate, filter: &Filter) -> String {
+    render_view(view, today, Some(filter))
+}
+
+fn render_view(view: &View, today: NaiveDate, filter: Option<&Filter>) -> String {
     let mut output = String::new();
     if !view.notice.is_empty() {
         let _ = writeln!(output, "{}\n", view.notice);
@@ -140,26 +206,31 @@ pub fn render(view: &View, today: NaiveDate) -> String {
         }
         if is_active {
             labels.push("active — numbers are editable");
+        } else if filter.is_some() {
+            labels.push("history — letters scoped to this date");
         } else {
             labels.push("history — letters are browsing labels");
         }
         let _ = writeln!(output, "{} ({})", day.date, labels.join("; "));
-        let mut number = 1;
         for status in Status::ALL {
-            let _ = writeln!(output, "  {}", status.label());
             let items: Vec<_> = day
                 .numbered()
                 .into_iter()
-                .filter(|i| i.status == status)
+                .enumerate()
+                .filter(|(_, item)| item.status == status && filter.is_none_or(|f| f.matches(item)))
                 .collect();
+            if filter.is_some() && items.is_empty() {
+                continue;
+            }
+            let _ = writeln!(output, "  {}", status.label());
             if items.is_empty() {
                 output.push_str("    (empty)\n");
             }
-            for item in items {
+            for (index, item) in items {
                 let label = if is_active {
-                    let label = number.to_string();
-                    number += 1;
-                    label
+                    (index + 1).to_string()
+                } else if filter.is_some() {
+                    letters(index)
                 } else {
                     let label = letters(historical_index);
                     historical_index += 1;
@@ -169,6 +240,9 @@ pub fn render(view: &View, today: NaiveDate) -> String {
             }
         }
         output.push('\n');
+    }
+    if filter.is_some() {
+        output.push_str("Copy a match: `krk repeat NUMBER` (active), or `krk repeat --from YYYY-MM-DD LETTER` (history).\n");
     }
     output
 }

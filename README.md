@@ -31,6 +31,9 @@ Run `krk --help` or `krk COMMAND --help` for command help.
 | `krk new-day` | Start today explicitly; leave an existing today unchanged |
 | `krk todo "title"` | Add a todo to the active day |
 | `krk list` | Show today; if empty, also show the previous recorded day |
+| `krk search "text" [PERIOD]` | Search titles across all recorded days, or a selected period |
+| `krk list [PERIOD] --search "text"` | List matching titles; searches all history without PERIOD |
+| `krk list [PERIOD] --status STATUS` | List items with the selected status; searches all history without PERIOD |
 | `krk doing NUMBER` | Move an active-day item into Doing |
 | `krk doing "title"` | Add an item directly to Doing |
 | `krk done NUMBER` | Move an active-day item into Done |
@@ -63,9 +66,11 @@ krk repeat --from 2026-10-02 B --status doing
 
 Without `--from`, use a current active-day number. With `--from`, select an
 earlier recorded date and use its uppercase letter from `krk list YYYY-MM-DD`.
-Letters are scoped to that single date for repeating; labels from multi-day
-listings can differ. Labels past Z work as AA, AB, etc. The source may be in
-any section. `--status todo|doing|done` selects the new entry's status; the
+Letters are scoped to that single date for repeating. Search and filtered
+results use the same date-scoped letters, so you can copy a result directly.
+Labels from unfiltered multi-day listings can differ. Labels past Z work as
+AA, AB, etc. The source may be in any section.
+`--status todo|doing|done` selects the new entry's status; the
 default is To do. Copies go to the last explicitly started day, including
 when it is earlier than today. Repeating never starts a day automatically;
 run `krk new-day` first if there are no recorded days. Each repeat creates
@@ -89,7 +94,7 @@ day. If today exists but is empty, it shows both today and the most recent
 earlier record. Output always labels dates and the active day. Active-day
 items have numbers; historical items have letters (`A`…`Z`, `AA`, etc.).
 Historical letters cannot edit historical entries. `repeat --from` can copy
-one using its letter from a single-date listing.
+one using its letter from a single-date listing or search/filtered results.
 
 ### Listing dates
 
@@ -107,6 +112,39 @@ current calendar month. Ranges include both endpoints. Explicit selections
 show only the requested period, with recorded days in chronological order;
 they do not fall back to another day or create missing records.
 
+### Searching and filtering
+
+```sh
+krk search "weekly meeting"
+krk search "meeting" --status done
+krk search "meeting" month
+krk list --search "meeting" --status done
+krk list week --status doing
+krk list 2026-09-28..2026-10-07 --search "meeting"
+```
+
+Search matches text anywhere in a title, ignoring case. `search` and
+`list --search` are equivalent. Text and status filters can be combined;
+both must match. With no period, a search or filtered listing searches all
+recorded days. A supplied period limits results to those dates. An empty
+search matches all titles, and `--status` works without a text filter.
+Plain `krk list` retains its usual today/previous-day behavior.
+
+Results show matching items grouped by date and status, omitting days and
+sections without matches. Entries keep their original active-day numbers
+or date-scoped historical letters, even if that leaves gaps. Repeated titles
+remain separate occurrences. To copy a historical result into today:
+
+```sh
+krk new-day
+krk search "weekly meeting" --status done
+krk repeat --from 2026-10-02 B
+```
+
+Use the date and letter from your results. Start today before searching so
+the displayed references reflect the active day you intend to copy into.
+Searching itself is read-only: it never starts a day or changes log files.
+
 ## Keyboard navigation
 
 | Key | Action |
@@ -116,6 +154,7 @@ they do not fall back to another day or create missing records.
 | Home/End or `g`/`G` | Select the first/last item |
 | `a` | Add a todo |
 | `c` | Copy the selected item from any day into the active day's To do |
+| `/` | Search titles across all recorded days |
 | `s`, `d`, `t` | Move to Doing, Done, or To do |
 | `e` | Edit the selected title |
 | `x` | Remove the selected item, with a `y`/`n` confirmation |
@@ -126,6 +165,18 @@ they do not fall back to another day or create missing records.
 
 Copying with `c` preserves the source, jumps to the active day, and selects
 the new entry. Press `s` to start working on it immediately.
+
+Press `/`, enter search text, and press Enter to list matches across all
+days, newest day first. An empty query lists all items. Results show the
+source date, original number/letter, status, and title. Navigate with
+Up/Down or `j`/`k`; Home/End or `g`/`G` selects the first/last match.
+Press `f` to cycle the status filter through all, Done, To do, and Doing.
+Press `/` again to refine the query while retaining the status filter.
+Enter opens the selected item's source day, `c` copies it into active To do,
+and Esc leaves the results. To copy into today, press `n` first; this starts
+today while retaining the selected search result. `r` refreshes results
+after external edits. Opening an active-day result also lets you use the
+usual editing and status shortcuts; historical entries remain read-only.
 
 In a title prompt, type or paste a title, use Backspace to delete a character
 or Ctrl-U to clear, Enter to save, and Esc to cancel. The add prompt shows up
@@ -271,7 +322,8 @@ cargo test --locked
 Tests cover rollover across weekends/months, numbered duplicate titles,
 date selection and list fallback, manual comments and CRLF preservation,
 malformed-file protection, stale selections, concurrent writes, configuration,
-CLI workflows, repeating items across days/months, title suggestions, and TUI
+CLI workflows, search/filter references and copying results into today,
+repeating items across days/months, title suggestions, and TUI
 keyboard/render behavior. Save tests inject partial
 writes, file/directory flush failures, replacement failures, and backup
 cleanup failures, and verify the original or applied update survives as

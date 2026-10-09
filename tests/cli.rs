@@ -139,6 +139,107 @@ fn invalid_repeat_arguments_leave_logs_unchanged_and_require_a_started_day() {
 }
 
 #[test]
+fn search_and_filtered_list_preserve_copyable_references_without_writing() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    let store = Store::new(logs.to_path_buf());
+    store.new_day(parse_date("2026-09-29").unwrap()).unwrap();
+    store
+        .change(Change::Add("unrelated".into(), Status::Done), None)
+        .unwrap();
+    store
+        .change(Change::Add("möte 日本語".into(), Status::Done), None)
+        .unwrap();
+    store.new_day(parse_date("2026-09-30").unwrap()).unwrap();
+    for n in 0..27 {
+        let title = if n == 26 {
+            "MÖTE 日本語".into()
+        } else {
+            format!("other {n}")
+        };
+        store
+            .change(Change::Add(title, Status::Done), None)
+            .unwrap();
+    }
+    store.new_day(parse_date("2026-10-02").unwrap()).unwrap();
+    store
+        .change(Change::Add("unrelated active".into(), Status::Todo), None)
+        .unwrap();
+    store
+        .change(Change::Add("möte draft".into(), Status::Doing), None)
+        .unwrap();
+    store
+        .change(Change::Add("möte 日本語".into(), Status::Done), None)
+        .unwrap();
+    let source_path = logs.join("2026-09.md");
+    let active_path = logs.join("2026-10.md");
+    let original_source = fs::read(&source_path).unwrap();
+    let original_active = fs::read(&active_path).unwrap();
+    let backups = fs::read_dir(logs.join("backups")).unwrap().count();
+    let found = success(logs, &["search", "  MÖTE  ", "--status", "done"]);
+    assert!(found.contains("3 matching items"));
+    assert!(found.contains("2026-09-29"));
+    assert!(found.contains("B. möte 日本語"));
+    assert!(found.contains("AA. MÖTE 日本語"));
+    assert!(found.contains("3. möte 日本語"));
+    assert!(!found.contains("draft"));
+    assert!(!found.contains("unrelated"));
+    assert!(found.contains("krk repeat --from YYYY-MM-DD LETTER"));
+    assert_eq!(
+        success(logs, &["list", "--search", "  MÖTE  ", "--status", "done"]),
+        found
+    );
+    let period = success(logs, &["search", "möte", "2026-09-30", "--status", "done"]);
+    assert!(period.contains("1 matching item."));
+    assert!(period.contains("AA. MÖTE 日本語"));
+    assert!(!period.contains("B. möte"));
+    assert_eq!(
+        success(
+            logs,
+            &["list", "2026-09-30", "--search", "möte", "--status", "done"]
+        ),
+        period
+    );
+    let status_only = success(logs, &["list", "--status", "doing"]);
+    assert!(status_only.contains("2. möte draft"));
+    assert!(!status_only.contains("3. möte 日本語"));
+    let all = success(logs, &["search", ""]);
+    assert!(all.contains("32 matching items"));
+    let none = success(logs, &["search", "absent"]);
+    assert!(none.contains("No matching items"));
+    assert!(!none.contains("krk repeat NUMBER"));
+    for args in [
+        &["search"][..],
+        &["search", "möte", "--status", "invalid"],
+        &["search", "möte", "2026-02-30"],
+        &["search", "bad\ntext"],
+        &["list", "--search", "\u{1b}[2J"],
+    ] {
+        assert!(!run(logs, args).status.success(), "{args:?}");
+    }
+    assert_eq!(fs::read(&source_path).unwrap(), original_source);
+    assert_eq!(fs::read(&active_path).unwrap(), original_active);
+    assert_eq!(fs::read_dir(logs.join("backups")).unwrap().count(), backups);
+    // These are references from the search output, not positions among matches.
+    success(logs, &["repeat", "--from", "2026-09-30", "AA"]);
+    let day = store.active().unwrap().unwrap();
+    assert_eq!(day.numbered()[1].title, "MÖTE 日本語");
+    assert_eq!(day.numbered()[1].status, Status::Todo);
+    assert_eq!(fs::read(&source_path).unwrap(), original_source);
+    assert!(success(logs, &["search", "--help"]).contains("--status"));
+    assert!(success(logs, &["list", "--help"]).contains("--search"));
+}
+
+#[test]
+fn searching_does_not_start_today_or_create_missing_directories() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path().join("missing");
+    assert!(success(&logs, &["search", "meeting"]).contains("No matching items"));
+    assert!(success(&logs, &["list", "--status", "done"]).contains("No matching items"));
+    assert!(!logs.exists());
+}
+
+#[test]
 fn real_cli_workflow_with_unicode_duplicate_titles_and_errors() {
     let temp = tempfile::tempdir().unwrap();
     let logs = temp.path().join("log directory with spaces");

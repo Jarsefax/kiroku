@@ -32,8 +32,15 @@ impl Drop for Restore {
 
 enum Prompt {
     Add,
+    Search,
     Edit(usize),
     Remove(usize),
+}
+
+struct Search {
+    filter: listing::Filter,
+    results: Vec<(usize, usize)>, // Source day index and original item index.
+    selected: usize,
 }
 
 struct TitleSuggestion {
@@ -77,6 +84,7 @@ struct App {
     input: String,
     title_history: Vec<TitleSuggestion>,
     suggestion: Option<usize>,
+    search: Option<Search>,
     help: bool,
     error_popup: Option<String>,
     list_state: ListState,
@@ -95,6 +103,12 @@ impl App {
 
     fn reload(&mut self) -> Result<()> {
         let date = self.day().map(|d| d.date);
+        let search_selection = self.search.as_ref().and_then(|search| {
+            search
+                .results
+                .get(search.selected)
+                .map(|&(day, item)| (self.days[day].date, item))
+        });
         self.days = self.store.days(None)?;
         self.title_history = title_history(&self.days);
         self.suggestion = None;
@@ -103,7 +117,105 @@ impl App {
             .unwrap_or_else(|| self.days.len().saturating_sub(1));
         let length = self.day().map_or(0, |d| d.items.len());
         self.selected = self.selected.min(length.saturating_sub(1));
+        self.rebuild_search(search_selection);
         Ok(())
+    }
+
+    fn rebuild_search(&mut self, selected: Option<(NaiveDate, usize)>) {
+        if let Some(search) = &mut self.search {
+            let filter = &search.filter;
+            search.results = self
+                .days
+                .iter()
+                .enumerate()
+                .rev()
+                .flat_map(|(day_index, day)| {
+                    day.numbered()
+                        .into_iter()
+                        .enumerate()
+                        .filter(move |(_, item)| filter.matches(item))
+                        .map(move |(item_index, _)| (day_index, item_index))
+                })
+                .collect();
+            search.selected = selected
+                .and_then(|(date, item)| {
+                    search.results.iter().position(|&(day_index, item_index)| {
+                        self.days[day_index].date == date && item_index == item
+                    })
+                })
+                .unwrap_or(0);
+            self.list_state = ListState::default();
+        }
+    }
+
+    fn search_prompt(&mut self) {
+        self.input = self
+            .search
+            .as_ref()
+            .map_or_else(String::new, |search| search.filter.query.clone());
+        self.suggestion = None;
+        self.prompt = Some(Prompt::Search);
+    }
+
+    fn start_today(&mut self) -> Result<()> {
+        let created = self.store.new_day(Local::now().date_naive())?;
+        self.reload()?;
+        self.current = self.days.len().saturating_sub(1);
+        self.selected = 0;
+        self.message = if created {
+            "Started today; unfinished items carried into To do."
+        } else {
+            "Today is already started; no changes made."
+        }
+        .into();
+        Ok(())
+    }
+
+    fn search_key(&mut self, key: KeyEvent) -> Result<bool> {
+        let search = self.search.as_mut().unwrap();
+        let length = search.results.len();
+        match key.code {
+            KeyCode::Char('q') => return Ok(true),
+            KeyCode::Esc => {
+                self.search = None;
+                self.list_state = ListState::default();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                search.selected = (search.selected + 1).min(length.saturating_sub(1))
+            }
+            KeyCode::Up | KeyCode::Char('k') => search.selected = search.selected.saturating_sub(1),
+            KeyCode::Home | KeyCode::Char('g') => search.selected = 0,
+            KeyCode::End | KeyCode::Char('G') => search.selected = length.saturating_sub(1),
+            KeyCode::Char('/') => self.search_prompt(),
+            KeyCode::Char('?') => self.help = true,
+            KeyCode::Char('f') => {
+                search.filter.status = match search.filter.status {
+                    None => Some(Status::Done),
+                    Some(Status::Done) => Some(Status::Todo),
+                    Some(Status::Todo) => Some(Status::Doing),
+                    Some(Status::Doing) => None,
+                };
+                self.rebuild_search(None);
+            }
+            KeyCode::Char('c') if length > 0 => {
+                let (day, item) = search.results[search.selected];
+                self.repeat_item(day, item + 1)?;
+            }
+            KeyCode::Enter if length > 0 => {
+                let (day, item) = search.results[search.selected];
+                self.current = day;
+                self.selected = item;
+                self.search = None;
+                self.list_state = ListState::default();
+            }
+            KeyCode::Char('r') => {
+                self.reload()?;
+                self.message = "Reloaded files.".into();
+            }
+            KeyCode::Char('n') => self.start_today()?,
+            _ => (),
+        }
+        Ok(false)
     }
 
     fn apply(&mut self, change: Change) -> Result<()> {
@@ -127,12 +239,13 @@ impl App {
             .collect()
     }
 
-    fn repeat_selected(&mut self, number: usize) -> Result<()> {
-        let source = self.day().unwrap().clone();
+    fn repeat_item(&mut self, day_index: usize, number: usize) -> Result<()> {
+        let source = self.days[day_index].clone();
         let active = self.days.last().unwrap().clone();
         let from = (source.date != active.date).then_some(source.date);
         self.store
             .repeat(from, number, Status::Todo, Some(&source), Some(&active))?;
+        self.search = None;
         self.reload()?;
         self.current = self.days.len() - 1;
         self.selected = self
@@ -210,6 +323,21 @@ impl App {
                         self.suggestion = None;
                     }
                     KeyCode::Enter => {
+                        if matches!(prompt, Prompt::Search) {
+                            let status =
+                                self.search.as_ref().and_then(|search| search.filter.status);
+                            self.search = Some(Search {
+                                filter: listing::Filter::new(&self.input, status)?,
+                                results: vec![],
+                                selected: 0,
+                            });
+                            self.rebuild_search(None);
+                            self.prompt = None;
+                            self.input.clear();
+                            self.message =
+                                "Search covers all recorded days. Press c to copy a match.".into();
+                            return Ok(false);
+                        }
                         let change = match prompt {
                             Prompt::Add => {
                                 let title = self
@@ -240,11 +368,15 @@ impl App {
             }
             return Ok(false);
         }
+        if self.search.is_some() {
+            return self.search_key(key);
+        }
         let number = self.selected + 1;
         let length = self.day().map_or(0, |d| d.items.len());
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
             KeyCode::Char('?') => self.help = true,
+            KeyCode::Char('/') => self.search_prompt(),
             KeyCode::Down | KeyCode::Char('j') => {
                 self.selected = (self.selected + 1).min(length.saturating_sub(1))
             }
@@ -265,18 +397,7 @@ impl App {
                 self.reload()?;
                 self.message = "Reloaded files.".into();
             }
-            KeyCode::Char('n') => {
-                let created = self.store.new_day(Local::now().date_naive())?;
-                self.reload()?;
-                self.current = self.days.len().saturating_sub(1);
-                self.selected = 0;
-                self.message = if created {
-                    "Started today; unfinished items carried into To do."
-                } else {
-                    "Today is already started; no changes made."
-                }
-                .into();
-            }
+            KeyCode::Char('n') => self.start_today()?,
             KeyCode::Char('a') => {
                 ensure!(
                     self.editable(),
@@ -298,7 +419,7 @@ impl App {
             KeyCode::Char('t') if length > 0 => self.apply(Change::Move(number, Status::Todo))?,
             KeyCode::Char('s') if length > 0 => self.apply(Change::Move(number, Status::Doing))?,
             KeyCode::Char('d') if length > 0 => self.apply(Change::Move(number, Status::Done))?,
-            KeyCode::Char('c') if length > 0 => self.repeat_selected(number)?,
+            KeyCode::Char('c') if length > 0 => self.repeat_item(self.current, number)?,
             _ => (),
         }
         Ok(false)
@@ -314,22 +435,42 @@ impl App {
         ])
         .split(area);
         let today = Local::now().date_naive();
-        let heading = match self.day() {
-            Some(day) => format!(
-                "Kiroku  |  {}  |  {}{}",
-                day.date,
-                if self.editable() {
-                    "active"
+        let heading = if let Some(search) = &self.search {
+            format!(
+                "Kiroku | {} {} | {} | active {}{}",
+                search.results.len(),
+                if search.results.len() == 1 {
+                    "match"
                 } else {
-                    "history (read-only)"
+                    "matches"
                 },
-                if day.date != today {
-                    "  |  not today"
+                search.filter.status.map_or("all statuses", Status::label),
+                self.active()
+                    .map_or_else(|| "none".into(), |date| date.to_string()),
+                if self.active().is_some_and(|date| date != today) {
+                    " (not today)"
                 } else {
-                    "  |  today"
-                }
-            ),
-            None => "Kiroku  |  No recorded days — press n to start today".into(),
+                    ""
+                },
+            )
+        } else {
+            match self.day() {
+                Some(day) => format!(
+                    "Kiroku  |  {}  |  {}{}",
+                    day.date,
+                    if self.editable() {
+                        "active"
+                    } else {
+                        "history (read-only)"
+                    },
+                    if day.date != today {
+                        "  |  not today"
+                    } else {
+                        "  |  today"
+                    }
+                ),
+                None => "Kiroku  |  No recorded days — press n to start today".into(),
+            }
         };
         frame.render_widget(
             Paragraph::new(heading)
@@ -339,7 +480,32 @@ impl App {
         );
         let mut rows = vec![];
         let mut selected_row = None;
-        if let Some(day) = self.day() {
+        if let Some(search) = &self.search {
+            let numbered: Vec<_> = self.days.iter().map(Day::numbered).collect();
+            for (index, &(day_index, item_index)) in search.results.iter().enumerate() {
+                let day = &self.days[day_index];
+                let item = numbered[day_index][item_index];
+                let label = if Some(day.date) == self.active() {
+                    (item_index + 1).to_string()
+                } else {
+                    listing::letters(item_index)
+                };
+                rows.push(ListItem::new(format!(
+                    "{}  {label}. [{}] {}",
+                    day.date,
+                    item.status.label(),
+                    item.title
+                )));
+                if index == search.selected {
+                    selected_row = Some(index);
+                }
+            }
+            if rows.is_empty() {
+                rows.push(ListItem::new(
+                    "No matching items. Press / to change the search or f to change status.",
+                ));
+            }
+        } else if let Some(day) = self.day() {
             let mut index = 0;
             for status in Status::ALL {
                 rows.push(ListItem::new(Line::from(Span::styled(
@@ -373,8 +539,12 @@ impl App {
             rows.push(ListItem::new("No days are created automatically."));
         }
         self.list_state.select(selected_row);
+        let title = self.search.as_ref().map_or_else(
+            || " Work log ".into(),
+            |search| format!(" Search: {} ", search.filter.query),
+        );
         let list = List::new(rows)
-            .block(Block::default().borders(Borders::ALL).title(" Work log "))
+            .block(Block::default().borders(Borders::ALL).title(title))
             .highlight_style(
                 Style::default()
                     .bg(Color::DarkGray)
@@ -388,10 +558,18 @@ impl App {
                 .style(Style::default().fg(Color::Yellow)),
             layout[2],
         );
-        frame.render_widget(Paragraph::new("↑↓/jk items  ←→/hl days  a add  c copy  s doing  d done  t todo\ne edit  x remove  n new day  r reload  ? help  q quit").wrap(Wrap { trim: false }), layout[3]);
+        let shortcuts = if self.search.is_some() {
+            "↑↓/jk matches  c copy  Enter view  / search  f status\nn new day  r reload  Esc back  ? help  q quit"
+        } else {
+            "↑↓/jk items  ←→/hl days  a add  c copy  / search  s doing  d done  t todo\ne edit  x remove  n new day  r reload  ? help  q quit"
+        };
+        frame.render_widget(
+            Paragraph::new(shortcuts).wrap(Wrap { trim: false }),
+            layout[3],
+        );
         if self.help {
-            let text = "↑↓ or j/k: navigate items\n←→ or h/l: browse recorded days\ng/G or Home/End: first/last item\na: add a title to the active day's To do\nc: copy selected item from any day to active To do\ns: Doing   d: Done   t: To do\ne: rename   x: remove (confirm with y)\nn: explicitly start today\nr: reload after editing the Markdown files\n\nHistorical days are read-only in Kiroku.\nEdit their text files directly if needed.\nPrompt: type, Backspace, Ctrl-U to clear, Enter to save.\nAdd prompt: ↑↓/Tab selects a previous title.\nEsc cancels a prompt. Ctrl-C quits.\n\n? or Esc closes help; q quits.";
-            popup(frame, area, " Keyboard help ", text, 21);
+            let text = "↑↓ or j/k: navigate items\n←→ or h/l: browse recorded days\ng/G or Home/End: first/last item\na: add a title to the active day's To do\nc: copy selected item from any day to active To do\n/: search titles across all recorded days\nSearch: f cycles all/Done/To do/Doing; Enter views source\nSearch: c copies; Esc returns to browsing\ns: Doing   d: Done   t: To do\ne: rename   x: remove (confirm with y)\nn: explicitly start today\nr: reload after editing the Markdown files\n\nHistorical days are read-only in Kiroku.\nPrompt: type, Backspace, Ctrl-U to clear, Enter to save.\nAdd prompt: ↑↓/Tab selects a previous title.\nEsc cancels a prompt. Ctrl-C quits.\n\n? or Esc closes help; q quits.";
+            popup(frame, area, " Keyboard help ", text, 23);
         }
         if let Some(prompt) = &self.prompt {
             let (title, text) = match prompt {
@@ -417,6 +595,13 @@ impl App {
                 Prompt::Edit(_) => (
                     " Edit title — Enter saves, Esc cancels ",
                     self.input.clone(),
+                ),
+                Prompt::Search => (
+                    " Search titles — Enter lists, Esc cancels ",
+                    format!(
+                        "{}\n\nMatches text anywhere, ignoring case, across all days.\nLeave empty to list all items; f filters by status.",
+                        self.input
+                    ),
                 ),
                 Prompt::Remove(n) => (
                     " Remove item ",
@@ -476,6 +661,7 @@ pub fn run(store: Store) -> Result<()> {
         input: String::new(),
         title_history: vec![],
         suggestion: None,
+        search: None,
         help: false,
         error_popup: None,
         list_state: ListState::default(),
@@ -534,6 +720,7 @@ mod tests {
             input: String::new(),
             title_history: vec![],
             suggestion: None,
+            search: None,
             help: false,
             error_popup: None,
             list_state: ListState::default(),
@@ -544,6 +731,258 @@ mod tests {
 
     fn press(app: &mut App, code: KeyCode) {
         assert!(!app.key(KeyEvent::new(code, KeyModifiers::NONE)).unwrap());
+    }
+
+    fn search(app: &mut App, query: &str) {
+        press(app, KeyCode::Char('/'));
+        app.key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+            .unwrap();
+        for c in query.chars() {
+            press(app, KeyCode::Char(c));
+        }
+        press(app, KeyCode::Enter);
+    }
+
+    #[test]
+    fn search_filters_results_and_copies_the_original_item_to_today() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let today = Local::now().date_naive();
+        let source_date = today - chrono::Duration::days(2);
+        store.new_day(source_date).unwrap();
+        store
+            .change(Change::Add("unrelated todo".into(), Status::Todo), None)
+            .unwrap();
+        store
+            .change(Change::Add("meeting draft".into(), Status::Doing), None)
+            .unwrap();
+        store
+            .change(Change::Add("möte 日本語".into(), Status::Done), None)
+            .unwrap();
+        store
+            .change(Change::Add("same möte".into(), Status::Done), None)
+            .unwrap();
+        store.new_day(today - chrono::Duration::days(1)).unwrap();
+        store
+            .change(Change::Add("möte archived".into(), Status::Done), None)
+            .unwrap();
+        store.new_day(today).unwrap();
+        store
+            .change(Change::Add("möte current".into(), Status::Doing), None)
+            .unwrap();
+        store
+            .change(Change::Add("möte completed".into(), Status::Done), None)
+            .unwrap();
+        let before = store
+            .days(Some((source_date, source_date)))
+            .unwrap()
+            .remove(0);
+        let mut app = app(store.clone());
+        search(&mut app, "MÖTE");
+        assert_eq!(app.search.as_ref().unwrap().results.len(), 5);
+        press(&mut app, KeyCode::Char('f'));
+        assert_eq!(
+            app.search.as_ref().unwrap().filter.status,
+            Some(Status::Done)
+        );
+        assert_eq!(app.search.as_ref().unwrap().results.len(), 4);
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.search.as_ref().unwrap().results[2], (0, 2));
+        press(&mut app, KeyCode::Char('c'));
+        assert!(app.search.is_none());
+        assert!(app.editable());
+        let active = store.active().unwrap().unwrap();
+        assert_eq!(active.date, today);
+        assert_eq!(active.numbered()[app.selected].title, "möte 日本語");
+        assert_eq!(active.numbered()[app.selected].status, Status::Todo);
+        let after = store
+            .days(Some((source_date, source_date)))
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            before
+                .items
+                .iter()
+                .map(|i| (&i.title, i.status))
+                .collect::<Vec<_>>(),
+            after
+                .items
+                .iter()
+                .map(|i| (&i.title, i.status))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn search_can_start_today_without_losing_the_selected_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let today = Local::now().date_naive();
+        let source_date = today - chrono::Duration::days(2);
+        store.new_day(source_date).unwrap();
+        store
+            .change(Change::Add("matching title".into(), Status::Doing), None)
+            .unwrap();
+        store.new_day(today - chrono::Duration::days(1)).unwrap();
+        let mut app = app(store.clone());
+        search(&mut app, "matching");
+        press(&mut app, KeyCode::End);
+        assert_eq!(app.search.as_ref().unwrap().selected, 1);
+        press(&mut app, KeyCode::Char('n'));
+        let search = app.search.as_ref().unwrap();
+        assert_eq!(search.results.len(), 3);
+        assert_eq!(search.selected, 2);
+        assert_eq!(search.results[search.selected], (0, 0));
+        press(&mut app, KeyCode::Char('c'));
+        let active = store.active().unwrap().unwrap();
+        assert_eq!(active.date, today);
+        assert_eq!(active.items.len(), 2); // One carried forward, one copied.
+        assert_eq!(app.selected, 1);
+        assert_eq!(
+            store.days(Some((source_date, source_date))).unwrap()[0].items[0].status,
+            Status::Doing
+        );
+    }
+
+    #[test]
+    fn search_navigation_refinement_status_and_cancellation_are_read_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let today = Local::now().date_naive();
+        store.new_day(today - chrono::Duration::days(1)).unwrap();
+        store
+            .change(Change::Add("todo match".into(), Status::Todo), None)
+            .unwrap();
+        store
+            .change(Change::Add("doing match".into(), Status::Doing), None)
+            .unwrap();
+        store
+            .change(Change::Add("done match".into(), Status::Done), None)
+            .unwrap();
+        store.new_day(today).unwrap();
+        let paths: Vec<_> = store
+            .days(None)
+            .unwrap()
+            .iter()
+            .map(|d| store.dir.join(format!("{}.md", d.date.format("%Y-%m"))))
+            .collect();
+        let original: Vec<_> = paths
+            .iter()
+            .map(|path| std::fs::read(path).unwrap())
+            .collect();
+        let mut app = app(store.clone());
+        press(&mut app, KeyCode::Char('/'));
+        press(&mut app, KeyCode::Esc);
+        assert!(app.search.is_none());
+        search(&mut app, "");
+        assert_eq!(app.search.as_ref().unwrap().results.len(), 5);
+        for status in [
+            Some(Status::Done),
+            Some(Status::Todo),
+            Some(Status::Doing),
+            None,
+        ] {
+            press(&mut app, KeyCode::Char('f'));
+            let search = app.search.as_ref().unwrap();
+            assert_eq!(search.filter.status, status);
+            assert!(search.results.iter().all(|&(day, item)| {
+                status.is_none_or(|status| app.days[day].numbered()[item].status == status)
+            }));
+        }
+        press(&mut app, KeyCode::End);
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.search.as_ref().unwrap().selected, 4);
+        press(&mut app, KeyCode::Home);
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.search.as_ref().unwrap().selected, 0);
+        press(&mut app, KeyCode::Char('f')); // Done only.
+        press(&mut app, KeyCode::Char('/'));
+        press(&mut app, KeyCode::Char('z'));
+        press(&mut app, KeyCode::Esc);
+        assert!(app.search.as_ref().unwrap().filter.query.is_empty());
+        search(&mut app, "done");
+        assert_eq!(
+            app.search.as_ref().unwrap().filter.status,
+            Some(Status::Done)
+        );
+        press(&mut app, KeyCode::Enter);
+        assert!(app.search.is_none());
+        assert_eq!(app.current, 0);
+        assert_eq!(app.selected, 2); // Original source index, not result position.
+        search(&mut app, "absent");
+        assert!(app.search.as_ref().unwrap().results.is_empty());
+        press(&mut app, KeyCode::Char('c'));
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::End);
+        press(&mut app, KeyCode::Char('r'));
+        assert!(app.search.as_ref().unwrap().results.is_empty());
+        press(&mut app, KeyCode::Esc);
+        assert!(app.search.is_none());
+        for (path, original) in paths.iter().zip(original) {
+            assert_eq!(std::fs::read(path).unwrap(), original);
+        }
+    }
+
+    #[test]
+    fn search_results_render_original_letters_and_reject_stale_copies() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let today = Local::now().date_naive();
+        let source_date = today - chrono::Duration::days(1);
+        store.new_day(source_date).unwrap();
+        for n in 0..27 {
+            store
+                .change(
+                    Change::Add(
+                        if n == 26 {
+                            "target title".into()
+                        } else {
+                            format!("other {n}")
+                        },
+                        Status::Done,
+                    ),
+                    None,
+                )
+                .unwrap();
+        }
+        store.new_day(today).unwrap();
+        let mut app = app(store.clone());
+        search(&mut app, "target");
+        for (width, height) in [(80, 24), (20, 8), (3, 2)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            if width == 80 {
+                let text = terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<String>();
+                assert!(text.contains("1 match |"));
+                assert!(text.contains("AA. [Done] target title"));
+                assert!(text.contains(&source_date.to_string()));
+            }
+            press(&mut app, KeyCode::Char('/'));
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            press(&mut app, KeyCode::Esc);
+        }
+        let path = store
+            .dir
+            .join(format!("{}.md", source_date.format("%Y-%m")));
+        let changed = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("target title", "external edit");
+        std::fs::write(&path, &changed).unwrap();
+        let error = app
+            .key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE))
+            .unwrap_err();
+        assert!(error.to_string().contains("source day changed"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), changed);
+        assert!(store.active().unwrap().unwrap().items.is_empty());
+        app.reload().unwrap();
+        assert!(app.search.as_ref().unwrap().results.is_empty());
     }
 
     #[test]

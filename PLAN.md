@@ -106,6 +106,18 @@ These defaults were adopted for the first implementation.
   `--status todo|doing|done` chooses the new status, defaulting to To do.
   Copying keeps the exact title, permits duplicates, targets the last
   explicitly started day, and never starts a day automatically.
+- `krk search TEXT [PERIOD]` and `krk list [PERIOD] --search TEXT` search
+  title substrings ignoring case. Both support `--status todo|doing|done`;
+  `list --status` also works without text. With no period, filters search
+  all recorded days. Explicit periods restrict dates without fallback.
+  Results are read-only and preserve original active-day numbers and
+  date-scoped historical letters so `repeat` can copy matches directly.
+- TUI `/` prompts for a search across all recorded days. Results list the
+  date, original label, status, and title, newest day first. Navigation
+  selects matches; `f` cycles all/Done/To do/Doing, `/` refines the query,
+  Enter opens the source day, `c` copies into active To do, and Esc returns
+  to browsing. `n` starts today without losing the selected result;
+  `r` reloads results. Search copies retain stale-view protection.
 - TUI `c` copies the selected item from any day into active To do, jumps to
   the active day, and selects the copy. Reject stale source and destination
   snapshots before saving. The add prompt suggests unique previous titles,
@@ -132,8 +144,9 @@ These defaults were adopted for the first implementation.
   failure reports that the update succeeded. Show full TUI errors in a popup.
 - Test partial writes, flush failures, replacement failures, backup retention,
   and cleanup failures through injectable IO operations.
-- TUI: arrows/jk select items, arrows/hl browse days, a adds, c copies, s/d/t change
-  status, e edits, x removes, n starts today, r reloads, ? shows help, q quits.
+- TUI: arrows/jk select items, arrows/hl browse days, a adds, c copies,
+  / searches, s/d/t change status, e edits, x removes, n starts today,
+  r reloads, ? shows help, q quits.
   Enter saves a title prompt; Esc cancels; Backspace edits; Ctrl-U clears.
 
 Example monthly file:
