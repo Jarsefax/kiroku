@@ -17,7 +17,10 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
-use std::io::{self, IsTerminal};
+use std::{
+    collections::BTreeMap,
+    io::{self, IsTerminal},
+};
 
 struct Restore;
 impl Drop for Restore {
@@ -33,6 +36,37 @@ enum Prompt {
     Remove(usize),
 }
 
+struct TitleSuggestion {
+    title: String,
+    last_used: NaiveDate,
+    last_completed: Option<NaiveDate>,
+}
+
+fn title_history(days: &[Day]) -> Vec<TitleSuggestion> {
+    let mut titles = BTreeMap::new();
+    for day in days.iter().rev() {
+        for item in &day.items {
+            let entry = titles
+                .entry(item.title.clone())
+                .or_insert_with(|| TitleSuggestion {
+                    title: item.title.clone(),
+                    last_used: day.date,
+                    last_completed: None,
+                });
+            if item.status == Status::Done && entry.last_completed.is_none() {
+                entry.last_completed = Some(day.date);
+            }
+        }
+    }
+    let mut titles: Vec<_> = titles.into_values().collect();
+    titles.sort_by(|a, b| {
+        b.last_used
+            .cmp(&a.last_used)
+            .then_with(|| a.title.cmp(&b.title))
+    });
+    titles
+}
+
 struct App {
     store: Store,
     days: Vec<Day>,
@@ -41,6 +75,8 @@ struct App {
     message: String,
     prompt: Option<Prompt>,
     input: String,
+    title_history: Vec<TitleSuggestion>,
+    suggestion: Option<usize>,
     help: bool,
     error_popup: Option<String>,
     list_state: ListState,
@@ -60,6 +96,8 @@ impl App {
     fn reload(&mut self) -> Result<()> {
         let date = self.day().map(|d| d.date);
         self.days = self.store.days(None)?;
+        self.title_history = title_history(&self.days);
+        self.suggestion = None;
         self.current = date
             .and_then(|date| self.days.iter().position(|d| d.date == date))
             .unwrap_or_else(|| self.days.len().saturating_sub(1));
@@ -77,6 +115,36 @@ impl App {
         self.store.change(change, expected.as_ref())?;
         self.reload()?;
         self.message = "Saved. Item numbers may have changed.".into();
+        Ok(())
+    }
+
+    fn suggestions(&self) -> Vec<&TitleSuggestion> {
+        let query = self.input.trim().to_lowercase();
+        self.title_history
+            .iter()
+            .filter(|entry| entry.title.to_lowercase().contains(&query))
+            .take(5)
+            .collect()
+    }
+
+    fn repeat_selected(&mut self, number: usize) -> Result<()> {
+        let source = self.day().unwrap().clone();
+        let active = self.days.last().unwrap().clone();
+        let from = (source.date != active.date).then_some(source.date);
+        self.store
+            .repeat(from, number, Status::Todo, Some(&source), Some(&active))?;
+        self.reload()?;
+        self.current = self.days.len() - 1;
+        self.selected = self
+            .day()
+            .unwrap()
+            .numbered()
+            .into_iter()
+            .take_while(|item| item.status == Status::Todo)
+            .count()
+            .saturating_sub(1);
+        self.list_state = ListState::default();
+        self.message = "Copied to the active day's To do. Press s to start working.".into();
         Ok(())
     }
 
@@ -108,12 +176,29 @@ impl App {
                     KeyCode::Esc => {
                         self.prompt = None;
                         self.input.clear();
+                        self.suggestion = None;
                     }
                     KeyCode::Backspace => {
                         self.input.pop();
+                        self.suggestion = None;
                     }
                     KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        self.input.clear()
+                        self.input.clear();
+                        self.suggestion = None;
+                    }
+                    KeyCode::Down | KeyCode::Tab if matches!(prompt, Prompt::Add) => {
+                        let length = self.suggestions().len();
+                        if length > 0 {
+                            self.suggestion = Some(self.suggestion.map_or(0, |n| (n + 1) % length));
+                        }
+                    }
+                    KeyCode::Up | KeyCode::BackTab if matches!(prompt, Prompt::Add) => {
+                        let length = self.suggestions().len();
+                        self.suggestion = match self.suggestion {
+                            Some(0) => None,
+                            Some(n) => Some(n - 1),
+                            None => length.checked_sub(1),
+                        };
                     }
                     KeyCode::Char(c)
                         if !key
@@ -121,11 +206,20 @@ impl App {
                             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
                             && !c.is_control() =>
                     {
-                        self.input.push(c)
+                        self.input.push(c);
+                        self.suggestion = None;
                     }
                     KeyCode::Enter => {
                         let change = match prompt {
-                            Prompt::Add => Change::Add(self.input.clone(), Status::Todo),
+                            Prompt::Add => {
+                                let title = self
+                                    .suggestion
+                                    .and_then(|n| {
+                                        self.suggestions().get(n).map(|entry| entry.title.clone())
+                                    })
+                                    .unwrap_or_else(|| self.input.clone());
+                                Change::Add(title, Status::Todo)
+                            }
                             Prompt::Edit(n) => Change::Edit(*n, self.input.clone()),
                             _ => unreachable!(),
                         };
@@ -189,6 +283,7 @@ impl App {
                     "Start a day with n, or navigate to the active day to add items"
                 );
                 self.input.clear();
+                self.suggestion = None;
                 self.prompt = Some(Prompt::Add);
             }
             KeyCode::Char('e') if length > 0 => {
@@ -203,6 +298,7 @@ impl App {
             KeyCode::Char('t') if length > 0 => self.apply(Change::Move(number, Status::Todo))?,
             KeyCode::Char('s') if length > 0 => self.apply(Change::Move(number, Status::Doing))?,
             KeyCode::Char('d') if length > 0 => self.apply(Change::Move(number, Status::Done))?,
+            KeyCode::Char('c') if length > 0 => self.repeat_selected(number)?,
             _ => (),
         }
         Ok(false)
@@ -292,14 +388,32 @@ impl App {
                 .style(Style::default().fg(Color::Yellow)),
             layout[2],
         );
-        frame.render_widget(Paragraph::new("↑↓/jk items  ←→/hl days  a add  s doing  d done  t todo\ne edit  x remove  n new day  r reload  ? help  q quit").wrap(Wrap { trim: false }), layout[3]);
+        frame.render_widget(Paragraph::new("↑↓/jk items  ←→/hl days  a add  c copy  s doing  d done  t todo\ne edit  x remove  n new day  r reload  ? help  q quit").wrap(Wrap { trim: false }), layout[3]);
         if self.help {
-            let text = "↑↓ or j/k: navigate items\n←→ or h/l: browse recorded days\ng/G or Home/End: first/last item\na: add a title to the active day's To do\ns: Doing   d: Done   t: To do\ne: rename   x: remove (confirm with y)\nn: explicitly start today\nr: reload after editing the Markdown files\n\nHistorical days are read-only in Kiroku.\nEdit their text files directly if needed.\nPrompt: type, Backspace, Ctrl-U to clear, Enter to save.\nEsc cancels a prompt. Ctrl-C quits.\n\n? or Esc closes help; q quits.";
-            popup(frame, area, " Keyboard help ", text, 19);
+            let text = "↑↓ or j/k: navigate items\n←→ or h/l: browse recorded days\ng/G or Home/End: first/last item\na: add a title to the active day's To do\nc: copy selected item from any day to active To do\ns: Doing   d: Done   t: To do\ne: rename   x: remove (confirm with y)\nn: explicitly start today\nr: reload after editing the Markdown files\n\nHistorical days are read-only in Kiroku.\nEdit their text files directly if needed.\nPrompt: type, Backspace, Ctrl-U to clear, Enter to save.\nAdd prompt: ↑↓/Tab selects a previous title.\nEsc cancels a prompt. Ctrl-C quits.\n\n? or Esc closes help; q quits.";
+            popup(frame, area, " Keyboard help ", text, 21);
         }
         if let Some(prompt) = &self.prompt {
             let (title, text) = match prompt {
-                Prompt::Add => (" Add todo — Enter saves, Esc cancels ", self.input.clone()),
+                Prompt::Add => {
+                    let mut text = format!(
+                        "{}\n\n↑↓/Tab selects a previous title; Enter saves.\n",
+                        self.input
+                    );
+                    for (n, entry) in self.suggestions().iter().enumerate() {
+                        let marker = if self.suggestion == Some(n) {
+                            "›"
+                        } else {
+                            " "
+                        };
+                        let date = entry.last_completed.map_or_else(
+                            || format!("used {}", entry.last_used),
+                            |date| format!("done {date}"),
+                        );
+                        text.push_str(&format!("{marker} {} ({date})\n", entry.title));
+                    }
+                    (" Add todo — Enter saves, Esc cancels ", text)
+                }
                 Prompt::Edit(_) => (
                     " Edit title — Enter saves, Esc cancels ",
                     self.input.clone(),
@@ -309,7 +423,13 @@ impl App {
                     format!("Remove active-day item {n}? Press y to remove, n/Esc to cancel."),
                 ),
             };
-            popup(frame, area, title, &text, 6);
+            popup(
+                frame,
+                area,
+                title,
+                &text,
+                if matches!(prompt, Prompt::Add) { 12 } else { 6 },
+            );
         }
         if let Some(error) = &self.error_popup {
             popup(
@@ -354,6 +474,8 @@ pub fn run(store: Store) -> Result<()> {
         message: String::new(),
         prompt: None,
         input: String::new(),
+        title_history: vec![],
+        suggestion: None,
         help: false,
         error_popup: None,
         list_state: ListState::default(),
@@ -410,6 +532,8 @@ mod tests {
             message: String::new(),
             prompt: None,
             input: String::new(),
+            title_history: vec![],
+            suggestion: None,
             help: false,
             error_popup: None,
             list_state: ListState::default(),
@@ -420,6 +544,218 @@ mod tests {
 
     fn press(app: &mut App, code: KeyCode) {
         assert!(!app.key(KeyEvent::new(code, KeyModifiers::NONE)).unwrap());
+    }
+
+    #[test]
+    fn copy_active_item_preserves_original_and_selects_copy_for_starting() {
+        for status in Status::ALL {
+            let temp = tempfile::tempdir().unwrap();
+            let store = Store::new(temp.path().to_path_buf());
+            store.new_day(Local::now().date_naive()).unwrap();
+            store
+                .change(Change::Add("existing todo".into(), Status::Todo), None)
+                .unwrap();
+            store
+                .change(Change::Add("möte 日本語".into(), status), None)
+                .unwrap();
+            let mut app = app(store.clone());
+            app.selected = 1;
+            press(&mut app, KeyCode::Char('c'));
+            assert!(app.editable());
+            assert_eq!(app.selected, if status == Status::Todo { 2 } else { 1 });
+            let day = store.active().unwrap().unwrap();
+            assert_eq!(day.items.len(), 3);
+            assert_eq!(day.numbered()[app.selected].title, "möte 日本語");
+            assert_eq!(day.numbered()[app.selected].status, Status::Todo);
+            press(&mut app, KeyCode::Char('s'));
+            let day = store.active().unwrap().unwrap();
+            assert!(
+                day.items
+                    .iter()
+                    .any(|i| i.title == "möte 日本語" && i.status == status)
+            );
+            assert!(
+                day.items
+                    .iter()
+                    .any(|i| i.title == "möte 日本語" && i.status == Status::Doing)
+            );
+        }
+    }
+
+    #[test]
+    fn copy_historical_item_jumps_to_active_day_and_preserves_history() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let earlier = kiroku::storage::parse_date("2026-09-30").unwrap();
+        store.new_day(earlier).unwrap();
+        store
+            .change(Change::Add("123".into(), Status::Done), None)
+            .unwrap();
+        store
+            .new_day(kiroku::storage::parse_date("2026-10-02").unwrap())
+            .unwrap();
+        store
+            .change(Change::Add("already here".into(), Status::Todo), None)
+            .unwrap();
+        let original = std::fs::read(store.dir.join("2026-09.md")).unwrap();
+        let mut app = app(store.clone());
+        press(&mut app, KeyCode::Left);
+        assert!(!app.editable());
+        press(&mut app, KeyCode::Char('c'));
+        assert!(app.editable());
+        assert_eq!(app.selected, 1);
+        press(&mut app, KeyCode::Char('s'));
+        let day = store.active().unwrap().unwrap();
+        assert_eq!(day.items.len(), 2);
+        assert!(
+            day.items
+                .iter()
+                .any(|i| i.title == "123" && i.status == Status::Doing)
+        );
+        assert_eq!(
+            std::fs::read(store.dir.join("2026-09.md")).unwrap(),
+            original
+        );
+    }
+
+    #[test]
+    fn copy_rejects_stale_historical_source_or_active_destination() {
+        for change_source in [true, false] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = Store::new(temp.path().to_path_buf());
+            let source_date = kiroku::storage::parse_date("2026-09-30").unwrap();
+            store.new_day(source_date).unwrap();
+            store
+                .change(Change::Add("selected title".into(), Status::Done), None)
+                .unwrap();
+            store
+                .new_day(kiroku::storage::parse_date("2026-10-02").unwrap())
+                .unwrap();
+            let mut app = app(store.clone());
+            press(&mut app, KeyCode::Left);
+            if change_source {
+                let path = store.dir.join("2026-09.md");
+                let text = std::fs::read_to_string(&path)
+                    .unwrap()
+                    .replace("selected title", "external edit");
+                std::fs::write(path, text).unwrap();
+            } else {
+                store
+                    .change(Change::Add("external addition".into(), Status::Todo), None)
+                    .unwrap();
+            }
+            let path = store.dir.join("2026-10.md");
+            let before = std::fs::read(&path).unwrap();
+            let error = app
+                .key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE))
+                .unwrap_err();
+            assert!(error.to_string().contains("day changed"));
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn add_suggests_unique_titles_and_reuses_exact_text_only_when_selected() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let first = kiroku::storage::parse_date("2026-09-29").unwrap();
+        let second = kiroku::storage::parse_date("2026-09-30").unwrap();
+        store.new_day(first).unwrap();
+        store
+            .change(Change::Add("möte 日本語".into(), Status::Done), None)
+            .unwrap();
+        store.new_day(second).unwrap();
+        for _ in 0..2 {
+            store
+                .change(Change::Add("möte 日本語".into(), Status::Done), None)
+                .unwrap();
+        }
+        store
+            .change(Change::Add("never completed".into(), Status::Todo), None)
+            .unwrap();
+        store
+            .new_day(kiroku::storage::parse_date("2026-10-02").unwrap())
+            .unwrap();
+        let source = std::fs::read(store.dir.join("2026-09.md")).unwrap();
+        let mut app = app(store.clone());
+        let never_completed = app
+            .title_history
+            .iter()
+            .find(|i| i.title == "never completed")
+            .unwrap();
+        assert!(never_completed.last_completed.is_none());
+        press(&mut app, KeyCode::Char('a'));
+        for c in "MÖTE".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        assert_eq!(app.suggestions().len(), 1);
+        assert_eq!(app.suggestions()[0].last_completed, Some(second));
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.suggestion, Some(0));
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("› möte "));
+        assert!(rendered.contains("(done 2026-09-30)"));
+        for (width, height) in [(20, 8), (3, 2)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+        }
+        press(&mut app, KeyCode::Enter);
+        assert!(
+            store
+                .active()
+                .unwrap()
+                .unwrap()
+                .items
+                .iter()
+                .any(|i| i.title == "möte 日本語")
+        );
+        assert_eq!(std::fs::read(store.dir.join("2026-09.md")).unwrap(), source);
+        // Matching text remains a new title unless a suggestion was selected.
+        press(&mut app, KeyCode::Char('a'));
+        for c in "mö".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        assert!(app.suggestion.is_none());
+        press(&mut app, KeyCode::Enter);
+        assert!(
+            store
+                .active()
+                .unwrap()
+                .unwrap()
+                .items
+                .iter()
+                .any(|i| i.title == "mö")
+        );
+        let path = store.dir.join("2026-10.md");
+        let before = std::fs::read(&path).unwrap();
+        press(&mut app, KeyCode::Char('a'));
+        press(&mut app, KeyCode::Down);
+        assert!(app.suggestion.is_some());
+        press(&mut app, KeyCode::Up);
+        assert!(app.suggestion.is_none());
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('z'));
+        assert!(app.suggestion.is_none());
+        assert!(app.suggestions().is_empty());
+        press(&mut app, KeyCode::Down);
+        assert!(app.suggestion.is_none());
+        app.key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert!(app.input.is_empty());
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Tab);
+        assert!(app.suggestion.is_none());
+        press(&mut app, KeyCode::Esc);
     }
 
     #[test]

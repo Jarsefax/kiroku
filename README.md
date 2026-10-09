@@ -36,6 +36,8 @@ Run `krk --help` or `krk COMMAND --help` for command help.
 | `krk done NUMBER` | Move an active-day item into Done |
 | `krk done "title"` | Add an item directly to Done |
 | `krk todo NUMBER` | Move an active-day item back into To do |
+| `krk repeat NUMBER` | Copy an active-day item into To do, keeping the original |
+| `krk repeat --from YYYY-MM-DD LETTER` | Copy a historical item into the active day's To do |
 | `krk edit NUMBER "title"` | Rename an active-day item |
 | `krk remove NUMBER` | Remove an active-day item immediately |
 | `krk path` | Print the resolved log directory |
@@ -45,6 +47,29 @@ nonempty, single-line text; Unicode and duplicate titles are supported.
 `todo`, `doing`, and `done` treat an argument containing only ASCII digits as an item number,
 even when quoted; all other text is a new title. Invalid item numbers produce
 an error. Quote titles containing spaces.
+
+### Reusing a title
+
+Repeating an item creates a new entry with its exact title and leaves the
+original entry and status intact. To reopen an active-day Done item instead,
+use `krk doing NUMBER` or `krk todo NUMBER`.
+
+```sh
+krk repeat 3
+krk list 2026-10-02
+krk repeat --from 2026-10-02 B
+krk repeat --from 2026-10-02 B --status doing
+```
+
+Without `--from`, use a current active-day number. With `--from`, select an
+earlier recorded date and use its uppercase letter from `krk list YYYY-MM-DD`.
+Letters are scoped to that single date for repeating; labels from multi-day
+listings can differ. Labels past Z work as AA, AB, etc. The source may be in
+any section. `--status todo|doing|done` selects the new entry's status; the
+default is To do. Copies go to the last explicitly started day, including
+when it is earlier than today. Repeating never starts a day automatically;
+run `krk new-day` first if there are no recorded days. Each repeat creates
+another entry, even if the active day already contains that title.
 
 ### Days and rollover
 
@@ -63,7 +88,8 @@ If today has not been started, `krk list` says so and shows the last recorded
 day. If today exists but is empty, it shows both today and the most recent
 earlier record. Output always labels dates and the active day. Active-day
 items have numbers; historical items have letters (`A`…`Z`, `AA`, etc.).
-Historical letters are browsing labels, not arguments for editing commands.
+Historical letters cannot edit historical entries. `repeat --from` can copy
+one using its letter from a single-date listing.
 
 ### Listing dates
 
@@ -89,6 +115,7 @@ they do not fall back to another day or create missing records.
 | ←/→ or `h`/`l` | Browse earlier/later recorded days |
 | Home/End or `g`/`G` | Select the first/last item |
 | `a` | Add a todo |
+| `c` | Copy the selected item from any day into the active day's To do |
 | `s`, `d`, `t` | Move to Doing, Done, or To do |
 | `e` | Edit the selected title |
 | `x` | Remove the selected item, with a `y`/`n` confirmation |
@@ -97,8 +124,17 @@ they do not fall back to another day or create missing records.
 | `?` | Show help |
 | `q` or Ctrl-C | Quit |
 
+Copying with `c` preserves the source, jumps to the active day, and selects
+the new entry. Press `s` to start working on it immediately.
+
 In a title prompt, type or paste a title, use Backspace to delete a character
-or Ctrl-U to clear, Enter to save, and Esc to cancel. The app edits only the active day;
+or Ctrl-U to clear, Enter to save, and Esc to cancel. The add prompt shows up
+to five matching previous titles, most recently used first. Each exact title
+appears once, with its most recent completion date (or last use if never
+completed). Matching ignores case and searches anywhere in the title. Use
+Up/Down or Tab/Shift-Tab to select a suggestion, then Enter to reuse its exact
+text. With no suggestion selected, Enter saves the text you typed. Typing or
+deleting clears the suggestion selection. The app edits only the active day;
 historical days can be edited directly in their Markdown files. It redraws
 on input and resize rather than running an idle animation loop.
 
@@ -235,7 +271,8 @@ cargo test --locked
 Tests cover rollover across weekends/months, numbered duplicate titles,
 date selection and list fallback, manual comments and CRLF preservation,
 malformed-file protection, stale selections, concurrent writes, configuration,
-CLI workflows, and TUI keyboard/render behavior. Save tests inject partial
+CLI workflows, repeating items across days/months, title suggestions, and TUI
+keyboard/render behavior. Save tests inject partial
 writes, file/directory flush failures, replacement failures, and backup
 cleanup failures, and verify the original or applied update survives as
 appropriate.

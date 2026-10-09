@@ -75,9 +75,10 @@ These defaults were adopted for the first implementation.
   for historical items, labeling the active day explicitly. Before starting
   today, the previous recorded day remains active and retains its numbers.
   After starting an empty today, the preceding day is historical and receives
-  letters. Historical labels are for browsing; mutation commands accept only
-  active-day numbers. Letters continue past Z as AA, AB, etc., and are unique
-  across historical items in each CLI listing.
+  letters. Editing commands accept only active-day numbers. Repeating may
+  copy a historical entry using its date and letter from a single-date
+  listing. Letters continue past Z as AA, AB, etc., and are unique across
+  historical items in each CLI listing.
 - Selectors: `krk list today`, `krk list yesterday`,
   `krk list week`, `krk list month`, `krk list YYYY-MM-DD`, and
   `krk list YYYY-MM-DD..YYYY-MM-DD` (inclusive range).
@@ -99,6 +100,19 @@ These defaults were adopted for the first implementation.
 - All status commands may move an active-day item from any status. Editing
   replaces its title; removal deletes the item. CLI removal is immediate;
   TUI removal has a y/n confirmation.
+- `krk repeat NUMBER` copies an active-day item into To do without changing
+  its original entry. `krk repeat --from YYYY-MM-DD LETTER` copies from an
+  earlier recorded date, with letters scoped to a single-date listing.
+  `--status todo|doing|done` chooses the new status, defaulting to To do.
+  Copying keeps the exact title, permits duplicates, targets the last
+  explicitly started day, and never starts a day automatically.
+- TUI `c` copies the selected item from any day into active To do, jumps to
+  the active day, and selects the copy. Reject stale source and destination
+  snapshots before saving. The add prompt suggests unique previous titles,
+  most recently used first, with their latest completion date (or last use).
+  Case-insensitive substring matching shows up to five titles; Up/Down or
+  Tab/Shift-Tab selects one for Enter to reuse. Enter without a selection
+  saves the typed text. Typing or deleting resets the suggestion selection.
 - Preserve untouched lines, previous day records, blank lines, and standalone
   HTML comments, including multiline comments. Retain the file's LF/CRLF
   newline convention. Reject malformed or unsupported content instead of
@@ -118,7 +132,7 @@ These defaults were adopted for the first implementation.
   failure reports that the update succeeded. Show full TUI errors in a popup.
 - Test partial writes, flush failures, replacement failures, backup retention,
   and cleanup failures through injectable IO operations.
-- TUI: arrows/jk select items, arrows/hl browse days, a adds, s/d/t change
+- TUI: arrows/jk select items, arrows/hl browse days, a adds, c copies, s/d/t change
   status, e edits, x removes, n starts today, r reloads, ? shows help, q quits.
   Enter saves a title prompt; Esc cancels; Backspace edits; Ctrl-U clears.
 

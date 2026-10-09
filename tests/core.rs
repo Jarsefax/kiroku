@@ -1,4 +1,4 @@
-use chrono::{Duration, NaiveDate};
+use chrono::{Datelike, Duration, NaiveDate};
 use kiroku::{
     config, listing,
     storage::{Change, Status, Store, parse_date},
@@ -52,6 +52,211 @@ fn titles(store: &Store) -> Vec<(String, Status)> {
         .into_iter()
         .map(|i| (i.title.clone(), i.status))
         .collect()
+}
+
+#[test]
+fn repeat_active_items_preserves_each_source_and_its_exact_title() {
+    for source_status in Status::ALL {
+        let (_temp, store) = fixture();
+        store.new_day(date("2026-10-02")).unwrap();
+        store
+            .change(Change::Add("möte 日本語".into(), source_status), None)
+            .unwrap();
+        store
+            .change(Change::Add("123".into(), source_status), None)
+            .unwrap();
+        let source = store.active().unwrap().unwrap();
+        store
+            .repeat(None, 1, Status::Todo, Some(&source), Some(&source))
+            .unwrap();
+        let after_copy = store.active().unwrap().unwrap();
+        let numeric_title = after_copy
+            .numbered()
+            .iter()
+            .position(|i| i.title == "123")
+            .unwrap()
+            + 1;
+        let day = store
+            .repeat(None, numeric_title, Status::Doing, None, None)
+            .unwrap();
+        assert_eq!(day.items.len(), 4);
+        let numbered = day.numbered();
+        assert_eq!(numbered[0].title, "möte 日本語");
+        assert_eq!(numbered[0].status, Status::Todo);
+        assert!(
+            day.items
+                .iter()
+                .any(|i| i.title == "123" && i.status == source_status)
+        );
+        assert!(
+            day.items
+                .iter()
+                .any(|i| i.title == "möte 日本語" && i.status == source_status)
+        );
+        assert!(
+            day.items
+                .iter()
+                .any(|i| i.title == "123" && i.status == Status::Doing)
+        );
+        assert_eq!(day.date, source.date); // Repeating never starts today.
+    }
+}
+
+#[test]
+fn repeat_history_preserves_source_bytes_within_and_across_months() {
+    for source_date in ["2026-10-01", "2026-09-30"] {
+        let (_temp, store) = fixture();
+        fs::create_dir_all(&store.dir).unwrap();
+        let source_date = date(source_date);
+        let path = store
+            .dir
+            .join(format!("{}.md", source_date.format("%Y-%m")));
+        let original = format!(
+            "<!-- keep comments -->\r\n# {source_date}\r\n\r\n## To do\r\n\r\n## Doing\r\n\r\n## Done\r\n- möte 日本語\r\n- möte 日本語\r\n"
+        );
+        fs::write(&path, &original).unwrap();
+        store.new_day(date("2026-10-02")).unwrap();
+        store
+            .repeat(Some(source_date), 2, Status::Doing, None, None)
+            .unwrap();
+        assert_eq!(titles(&store), [("möte 日本語".into(), Status::Doing)]);
+        let text = fs::read_to_string(&path).unwrap();
+        if source_date.month() == 9 {
+            assert_eq!(text, original);
+        } else {
+            assert!(text.starts_with(&original));
+            assert!(!text.replace("\r\n", "").contains('\n'));
+        }
+        assert!(
+            store
+                .previous(date("2026-10-02"))
+                .unwrap()
+                .unwrap()
+                .items
+                .iter()
+                .all(|i| i.status == Status::Done)
+        );
+    }
+}
+
+#[test]
+fn repeat_rejects_stale_source_and_destination_snapshots() {
+    let (_temp, store) = fixture();
+    store.new_day(date("2026-09-30")).unwrap();
+    store
+        .change(Change::Add("original".into(), Status::Done), None)
+        .unwrap();
+    let source = store.active().unwrap().unwrap();
+    store.new_day(date("2026-10-02")).unwrap();
+    let active = store.active().unwrap().unwrap();
+    let source_path = store.dir.join("2026-09.md");
+    let text = fs::read_to_string(&source_path)
+        .unwrap()
+        .replace("original", "changed externally");
+    fs::write(&source_path, text).unwrap();
+    let path = store.dir.join("2026-10.md");
+    let before = fs::read(&path).unwrap();
+    assert!(
+        store
+            .repeat(
+                Some(source.date),
+                1,
+                Status::Todo,
+                Some(&source),
+                Some(&active)
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("source day changed")
+    );
+    assert_eq!(fs::read(&path).unwrap(), before);
+    let fresh_source = store.previous(active.date).unwrap().unwrap();
+    store.new_day(date("2026-10-05")).unwrap();
+    let before = fs::read(&path).unwrap();
+    assert!(
+        store
+            .repeat(
+                Some(source.date),
+                1,
+                Status::Todo,
+                Some(&fresh_source),
+                Some(&active)
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("active day changed")
+    );
+    assert_eq!(fs::read(&path).unwrap(), before);
+    let active = store.active().unwrap().unwrap();
+    store
+        .change(Change::Add("external addition".into(), Status::Todo), None)
+        .unwrap();
+    let before = fs::read(&path).unwrap();
+    assert!(
+        store
+            .repeat(None, 1, Status::Todo, Some(&active), Some(&active))
+            .is_err()
+    );
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn historical_labels_round_trip_and_invalid_labels_fail() {
+    for index in [0, 25, 26, 51, 52, 701, 702, usize::MAX - 1] {
+        assert_eq!(
+            listing::letter_number(&listing::letters(index)).unwrap(),
+            index + 1
+        );
+    }
+    for label in [
+        "",
+        "a",
+        "1",
+        "A1",
+        " A",
+        "日本",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    ] {
+        assert!(listing::letter_number(label).is_err(), "{label:?}");
+    }
+}
+
+#[test]
+fn concurrent_historical_repeats_are_serialized() {
+    let (_temp, store) = fixture();
+    store.new_day(date("2026-10-01")).unwrap();
+    store
+        .change(Change::Add("meeting".into(), Status::Done), None)
+        .unwrap();
+    store.new_day(date("2026-10-02")).unwrap();
+    let threads: Vec<_> = (0..8)
+        .map(|_| {
+            let store = store.clone();
+            std::thread::spawn(move || {
+                store
+                    .repeat(Some(date("2026-10-01")), 1, Status::Todo, None, None)
+                    .unwrap()
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread.join().unwrap();
+    }
+    assert_eq!(titles(&store).len(), 8);
+    assert!(
+        titles(&store)
+            .iter()
+            .all(|i| i == &("meeting".into(), Status::Todo))
+    );
+    assert_eq!(
+        store
+            .previous(date("2026-10-02"))
+            .unwrap()
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
 }
 
 #[test]

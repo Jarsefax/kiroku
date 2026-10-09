@@ -53,6 +53,15 @@ impl Day {
             .flat_map(|status| self.items.iter().filter(move |i| i.status == status))
             .collect()
     }
+
+    fn matches(&self, expected: &Day) -> bool {
+        self.date == expected.date
+            && self
+                .items
+                .iter()
+                .map(|i| (&i.title, i.status))
+                .eq(expected.items.iter().map(|i| (&i.title, i.status)))
+    }
 }
 
 pub fn parse_date(text: &str) -> Result<NaiveDate> {
@@ -419,12 +428,7 @@ impl Store {
         let day = &document.days[day_index];
         if let Some(expected) = expected {
             ensure!(
-                day.date == expected.date
-                    && day
-                        .items
-                        .iter()
-                        .map(|i| (&i.title, i.status))
-                        .eq(expected.items.iter().map(|i| (&i.title, i.status))),
+                day.matches(expected),
                 "The active day changed outside this view. Reload it before editing"
             );
         }
@@ -472,6 +476,59 @@ impl Store {
                 }
             }
         }
+        document.reparse()?;
+        document.save()?;
+        Ok(document.days[day_index].clone())
+    }
+
+    /// Copy a source item into the active day without changing its original entry.
+    /// Numbers are one-based within the source day. `from` selects a historical
+    /// day; None selects the active day. TUI snapshots guard both the selection
+    /// and the destination against changes since the view was loaded.
+    pub fn repeat(
+        &self,
+        from: Option<NaiveDate>,
+        number: usize,
+        status: Status,
+        expected_source: Option<&Day>,
+        expected_active: Option<&Day>,
+    ) -> Result<Day> {
+        let _lock = self.lock()?;
+        let mut document = self
+            .active_document()?
+            .context("No day has been started. Run `krk new-day` first")?;
+        let day_index = document.days.len() - 1;
+        let active = &document.days[day_index];
+        if let Some(expected) = expected_active {
+            ensure!(
+                active.matches(expected),
+                "The active day changed outside this view. Reload it before repeating"
+            );
+        }
+        let source = if let Some(date) = from {
+            ensure!(
+                date < active.date,
+                "--from must select an earlier recorded day; use an active-day number otherwise"
+            );
+            self.days(Some((date, date)))?
+                .pop()
+                .with_context(|| format!("No recorded day for {date}"))?
+        } else {
+            active.clone()
+        };
+        if let Some(expected) = expected_source {
+            ensure!(
+                source.matches(expected),
+                "The source day changed outside this view. Reload it before repeating"
+            );
+        }
+        let item = source
+            .numbered()
+            .get(number.wrapping_sub(1))
+            .copied()
+            .with_context(|| format!("No source item {number} on {}", source.date))?
+            .clone();
+        document.insert_item(day_index, status, &item.title);
         document.reparse()?;
         document.save()?;
         Ok(document.days[day_index].clone())

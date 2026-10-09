@@ -1,5 +1,5 @@
 use crate::storage::{Day, Status, Store, parse_date};
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use chrono::{Datelike, Duration, NaiveDate};
 use std::fmt::Write;
 
@@ -104,6 +104,20 @@ pub fn letters(mut index: usize) -> String {
         index = index / 26 - 1;
     }
     result.into_iter().rev().collect()
+}
+
+/// Convert a date-scoped historical label (A, B, ..., AA) to a one-based number.
+pub fn letter_number(label: &str) -> Result<usize> {
+    ensure!(
+        !label.is_empty() && label.bytes().all(|b| b.is_ascii_uppercase()),
+        "Historical items use uppercase letters from `krk list YYYY-MM-DD`"
+    );
+    label.bytes().try_fold(0usize, |number, byte| {
+        number
+            .checked_mul(26)
+            .and_then(|n| n.checked_add(usize::from(byte - b'A') + 1))
+            .context("Historical item label is too large")
+    })
 }
 
 pub fn render(view: &View, today: NaiveDate) -> String {

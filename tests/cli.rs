@@ -1,5 +1,5 @@
 use chrono::{Datelike, Local};
-use kiroku::storage::{Status, Store};
+use kiroku::storage::{Change, Status, Store, parse_date};
 use std::{
     fs,
     process::{Command, Output},
@@ -22,6 +22,120 @@ fn success(directory: &std::path::Path, args: &[&str]) -> String {
         String::from_utf8_lossy(&result.stderr)
     );
     String::from_utf8(result.stdout).unwrap()
+}
+
+#[test]
+fn repeat_cli_copies_active_and_date_scoped_historical_items() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    let store = Store::new(logs.to_path_buf());
+    store.new_day(parse_date("2026-09-29").unwrap()).unwrap();
+    store
+        .change(Change::Add("older record".into(), Status::Done), None)
+        .unwrap();
+    store.new_day(parse_date("2026-09-30").unwrap()).unwrap();
+    for n in 0..27 {
+        let title = if n == 1 {
+            "möte 日本語".into()
+        } else if n == 26 {
+            "123".into()
+        } else {
+            format!("completed {n}")
+        };
+        store
+            .change(Change::Add(title, Status::Done), None)
+            .unwrap();
+    }
+    store.new_day(parse_date("2026-10-02").unwrap()).unwrap();
+    let path = logs.join("2026-09.md");
+    let original = fs::read(&path).unwrap();
+    let listing = success(logs, &["list", "2026-09-30"]);
+    assert!(listing.contains("B. möte 日本語"));
+    assert!(listing.contains("AA. 123"));
+    // Labels come from a single-date listing, even when other history exists.
+    let copied = success(logs, &["repeat", "--from", "2026-09-30", "B"]);
+    assert!(copied.contains("1. möte 日本語"));
+    assert!(copied.contains("Updated active day"));
+    success(
+        logs,
+        &["repeat", "AA", "--from", "2026-09-30", "--status", "doing"],
+    );
+    success(logs, &["repeat", "1", "--status", "done"]);
+    let day = store.active().unwrap().unwrap();
+    assert_eq!(
+        day.numbered()
+            .iter()
+            .map(|i| (i.title.as_str(), i.status))
+            .collect::<Vec<_>>(),
+        [
+            ("möte 日本語", Status::Todo),
+            ("123", Status::Doing),
+            ("möte 日本語", Status::Done),
+        ]
+    );
+    success(logs, &["repeat", "3"]);
+    assert_eq!(store.active().unwrap().unwrap().items.len(), 4);
+    assert_eq!(
+        store.active().unwrap().unwrap().date,
+        parse_date("2026-10-02").unwrap()
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+    assert!(success(logs, &["repeat", "--help"]).contains("--from"));
+}
+
+#[test]
+fn invalid_repeat_arguments_leave_logs_unchanged_and_require_a_started_day() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    let missing = run(logs, &["repeat", "1"]);
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("new-day"));
+    let store = Store::new(logs.to_path_buf());
+    store.new_day(parse_date("2026-09-30").unwrap()).unwrap();
+    store
+        .change(Change::Add("meeting".into(), Status::Done), None)
+        .unwrap();
+    store.new_day(parse_date("2026-10-02").unwrap()).unwrap();
+    store
+        .change(Change::Add("active item".into(), Status::Done), None)
+        .unwrap();
+    let source_path = logs.join("2026-09.md");
+    let active_path = logs.join("2026-10.md");
+    let source = fs::read(&source_path).unwrap();
+    let active = fs::read(&active_path).unwrap();
+    let backups = fs::read_dir(logs.join("backups")).unwrap().count();
+    for args in [
+        &["repeat"][..],
+        &["repeat", "0"],
+        &["repeat", "2"],
+        &["repeat", "B"],
+        &["repeat", "weekly meeting"],
+        &["repeat", "+1"],
+        &["repeat", "9999999999999999999999999999999999999999999"],
+        &["repeat", "--from", "2026-09-30", "1"],
+        &["repeat", "--from", "2026-09-30", "a"],
+        &["repeat", "--from", "2026-09-30", "B"],
+        &[
+            "repeat",
+            "--from",
+            "2026-09-30",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        ],
+        &["repeat", "--from", "2026-09-29", "A"],
+        &["repeat", "--from", "2026-10-02", "A"],
+        &["repeat", "--from", "2026-10-03", "A"],
+        &["repeat", "--from", "2026-02-30", "A"],
+        &["repeat", "1", "--status", "unknown"],
+    ] {
+        assert!(!run(logs, args).status.success(), "{args:?}");
+        assert_eq!(fs::read(&source_path).unwrap(), source, "{args:?}");
+        assert_eq!(fs::read(&active_path).unwrap(), active, "{args:?}");
+        assert_eq!(
+            fs::read_dir(logs.join("backups")).unwrap().count(),
+            backups,
+            "{args:?}"
+        );
+    }
 }
 
 #[test]
@@ -178,6 +292,7 @@ fn previous_month_edit_commands_back_up_original_or_abort_if_backup_unavailable(
         &["done", "1"],
         &["edit", "1", "renamed"],
         &["remove", "1"],
+        &["repeat", "1"],
     ] {
         for backup_unavailable in [false, true] {
             let temp = tempfile::tempdir().unwrap();
