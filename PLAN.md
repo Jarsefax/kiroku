@@ -112,6 +112,14 @@ These defaults were adopted for the first implementation.
   all recorded days. Explicit periods restrict dates without fallback.
   Results are read-only and preserve original active-day numbers and
   date-scoped historical letters so `repeat` can copy matches directly.
+- CLI search and list rows also have bracketed result numbers across all
+  displayed days. Appending `--repeat RESULT_NUMBER` to the same command
+  copies that result into active To do and prints the source and updated
+  day. Filters still select source items. Unfiltered lists support this
+  option without changing their default date selection. Invalid numbers
+  make no changes; copying never starts a day. Results are recomputed on
+  each run, so numbers can refer to different entries after log or date
+  changes. Original source labels remain available for separate commands.
 - TUI `/` prompts for a search across all recorded days. Results list the
   date, original label, status, and title, newest day first. Navigation
   selects matches; `f` cycles all/Done/To do/Doing, `/` refines the query,

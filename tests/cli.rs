@@ -240,6 +240,156 @@ fn searching_does_not_start_today_or_create_missing_directories() {
 }
 
 #[test]
+fn repeat_option_copies_search_and_list_results_into_todo() {
+    for (args, result, title) in [
+        (&["search", "meeting"][..], "3", "finished meeting"),
+        (
+            &["search", "meeting", "--status", "done"][..],
+            "2",
+            "finished meeting",
+        ),
+        (&["list", "--search", "meeting"][..], "1", "old meeting"),
+        (
+            &["list", "2026-10-01", "--search", "meeting"][..],
+            "1",
+            "second meeting",
+        ),
+        (
+            &["list", "2026-09-29..2026-10-02"][..],
+            "5",
+            "finished meeting",
+        ),
+        (&["list"][..], "3", "current meeting"),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let logs = temp.path();
+        let store = Store::new(logs.to_path_buf());
+        store.new_day(parse_date("2026-09-29").unwrap()).unwrap();
+        store
+            .change(Change::Add("unrelated".into(), Status::Todo), None)
+            .unwrap();
+        store
+            .change(Change::Add("old meeting".into(), Status::Done), None)
+            .unwrap();
+        store.new_day(parse_date("2026-10-01").unwrap()).unwrap();
+        store
+            .change(Change::Add("second meeting".into(), Status::Doing), None)
+            .unwrap();
+        store
+            .change(Change::Add("finished meeting".into(), Status::Done), None)
+            .unwrap();
+        store.new_day(parse_date("2026-10-02").unwrap()).unwrap();
+        store
+            .change(Change::Add("current meeting".into(), Status::Doing), None)
+            .unwrap();
+        let source_bytes = fs::read(logs.join("2026-09.md")).unwrap();
+        let historical = |store: &Store| {
+            store
+                .days(Some((
+                    parse_date("2026-09-29").unwrap(),
+                    parse_date("2026-10-01").unwrap(),
+                )))
+                .unwrap()
+                .into_iter()
+                .map(|day| {
+                    (
+                        day.date,
+                        day.items
+                            .into_iter()
+                            .map(|i| (i.title, i.status))
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let history = historical(&store);
+        let before = store.active().unwrap().unwrap();
+        let todo_count = before
+            .numbered()
+            .iter()
+            .filter(|i| i.status == Status::Todo)
+            .count();
+        let listing = success(logs, args);
+        assert!(
+            listing.lines().any(
+                |line| line.trim_start().starts_with(&format!("[{result}] "))
+                    && line.ends_with(title)
+            ),
+            "{args:?}: {listing}"
+        );
+        assert!(listing.contains("Append `--repeat N`"));
+        let mut with_repeat = args.to_vec();
+        with_repeat.extend(["--repeat", result]);
+        let output = success(logs, &with_repeat);
+        assert!(output.contains(&format!("Repeated result {result} from")));
+        assert!(output.contains("Updated active day"));
+        let after = store.active().unwrap().unwrap();
+        assert_eq!(after.date, before.date);
+        assert_eq!(after.items.len(), before.items.len() + 1);
+        assert_eq!(after.numbered()[todo_count].title, title);
+        assert_eq!(after.numbered()[todo_count].status, Status::Todo);
+        for original in &before.items {
+            assert!(
+                after
+                    .items
+                    .iter()
+                    .any(|i| i.title == original.title && i.status == original.status)
+            );
+        }
+        assert_eq!(historical(&store), history);
+        assert_eq!(fs::read(logs.join("2026-09.md")).unwrap(), source_bytes);
+    }
+}
+
+#[test]
+fn invalid_repeat_option_does_not_write_or_repeat_all_matches() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    let store = Store::new(logs.to_path_buf());
+    store.new_day(parse_date("2026-10-02").unwrap()).unwrap();
+    store
+        .change(Change::Add("möte 日本語".into(), Status::Done), None)
+        .unwrap();
+    let path = logs.join("2026-10.md");
+    let before = fs::read(&path).unwrap();
+    let backups = fs::read_dir(logs.join("backups")).unwrap().count();
+    for args in [
+        &["search", "möte", "--repeat"][..],
+        &["search", "möte", "--repeat", "0"],
+        &["search", "möte", "--repeat", "2"],
+        &["search", "möte", "--repeat", "A"],
+        &[
+            "search",
+            "möte",
+            "--repeat",
+            "9999999999999999999999999999999999999",
+        ],
+        &["search", "absent", "--repeat", "1"],
+        &["search", "möte", "--status", "todo", "--repeat", "1"],
+        &["list", "--repeat", "0"],
+        &["list", "2026-10-01", "--repeat", "1"],
+    ] {
+        assert!(!run(logs, args).status.success(), "{args:?}");
+        assert_eq!(fs::read(&path).unwrap(), before, "{args:?}");
+        assert_eq!(fs::read_dir(logs.join("backups")).unwrap().count(), backups);
+    }
+    success(logs, &["search", "MÖTE", "--repeat", "1"]);
+    let day = store.active().unwrap().unwrap();
+    assert_eq!(day.numbered()[0].title, "möte 日本語");
+    assert_eq!(day.numbered()[0].status, Status::Todo);
+    assert_eq!(day.numbered()[1].status, Status::Done);
+    assert!(success(logs, &["search", "--help"]).contains("--repeat"));
+    assert!(success(logs, &["list", "--help"]).contains("--repeat"));
+    let missing = temp.path().join("no recorded day");
+    assert!(
+        !run(&missing, &["search", "möte", "--repeat", "1"])
+            .status
+            .success()
+    );
+    assert!(!missing.exists());
+}
+
+#[test]
 fn real_cli_workflow_with_unicode_duplicate_titles_and_errors() {
     let temp = tempfile::tempdir().unwrap();
     let logs = temp.path().join("log directory with spaces");

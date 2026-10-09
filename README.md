@@ -34,6 +34,8 @@ Run `krk --help` or `krk COMMAND --help` for command help.
 | `krk search "text" [PERIOD]` | Search titles across all recorded days, or a selected period |
 | `krk list [PERIOD] --search "text"` | List matching titles; searches all history without PERIOD |
 | `krk list [PERIOD] --status STATUS` | List items with the selected status; searches all history without PERIOD |
+| `krk search "text" [PERIOD] --repeat RESULT_NUMBER` | Copy one search result into active To do |
+| `krk list [PERIOD] --repeat RESULT_NUMBER` | Copy one listed result into active To do; works with search/status filters |
 | `krk doing NUMBER` | Move an active-day item into Doing |
 | `krk doing "title"` | Add an item directly to Doing |
 | `krk done NUMBER` | Move an active-day item into Done |
@@ -131,9 +133,40 @@ search matches all titles, and `--status` works without a text filter.
 Plain `krk list` retains its usual today/previous-day behavior.
 
 Results show matching items grouped by date and status, omitting days and
-sections without matches. Entries keep their original active-day numbers
-or date-scoped historical letters, even if that leaves gaps. Repeated titles
-remain separate occurrences. To copy a historical result into today:
+sections without matches. Every CLI search or listing gives each entry a
+result number in brackets: `[1]`, `[2]`, etc., counted across all displayed
+days. The original source label follows it, for example `[2] B. weekly
+meeting`. Source labels keep their original active-day numbers or
+date-scoped historical letters in filtered results, even if that leaves
+gaps. Repeated titles remain separate occurrences.
+
+To reuse a result, arrow up in your terminal to recall the same command and
+append `--repeat N`, using the bracketed result number:
+
+```sh
+krk search "meeting"
+krk search "meeting" --repeat 2
+krk list month --search "meeting"
+krk list month --search "meeting" --repeat 2
+```
+
+`--repeat` also works with an unfiltered `krk list`, or with a status filter.
+It copies exactly one result into the active day's To do, preserving the
+source entry and exact title, and prints the copied source and updated
+active day. `--status` on a search/list command still filters source items;
+the copy always starts in To do. Invalid or missing result numbers make no
+changes. The separate `krk repeat` command uses the original source label,
+not the bracketed result number.
+
+Results are recomputed every time the command runs. If log contents, filters,
+or relative dates change between runs, the same result number may select a
+different entry. Start today before your initial search if you want copies
+to go into today. Without `--repeat`, searches and listings are read-only
+and never start a day or change log files. With `--repeat`, they still never
+start a day automatically.
+
+The separate repeat command remains available to copy a historical result
+into today using its source date and letter:
 
 ```sh
 krk new-day
@@ -143,7 +176,6 @@ krk repeat --from 2026-10-02 B
 
 Use the date and letter from your results. Start today before searching so
 the displayed references reflect the active day you intend to copy into.
-Searching itself is read-only: it never starts a day or changes log files.
 
 ## Keyboard navigation
 
@@ -323,7 +355,8 @@ Tests cover rollover across weekends/months, numbered duplicate titles,
 date selection and list fallback, manual comments and CRLF preservation,
 malformed-file protection, stale selections, concurrent writes, configuration,
 CLI workflows, search/filter references and copying results into today,
-repeating items across days/months, title suggestions, and TUI
+numbered search/list results with `--repeat`, repeating items across
+days/months, title suggestions, and TUI
 keyboard/render behavior. Save tests inject partial
 writes, file/directory flush failures, replacement failures, and backup
 cleanup failures, and verify the original or applied update survives as

@@ -313,6 +313,21 @@ fn filtered_results_keep_source_references_and_combine_text_status_and_dates() {
     assert_eq!(view.days[0].items.len(), 4); // Complete sources, not renumbered matches.
     let text = listing::render_filtered(&view, date("2026-10-03"), &filter);
     assert!(text.contains("4 matching items"));
+    assert!(text.contains("[1] C. Weekly meeting"));
+    assert!(text.contains("[4] 4. weekly meeting"));
+    for (result, source_date, source_number) in [
+        (1, "2026-09-30", 3),
+        (2, "2026-09-30", 4),
+        (3, "2026-10-01", 3),
+        (4, "2026-10-02", 4),
+    ] {
+        let (source, number) = view.result(result, Some(&filter)).unwrap();
+        assert_eq!(source.date, date(source_date));
+        assert_eq!(number, source_number);
+    }
+    for result in [0, 5, usize::MAX] {
+        assert!(view.result(result, Some(&filter)).is_err());
+    }
     assert!(text.contains("C. Weekly meeting"));
     assert!(text.contains("D. weekly meeting"));
     assert!(text.contains("C. WEEKLY meeting"));

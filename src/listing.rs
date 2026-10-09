@@ -9,6 +9,26 @@ pub struct View {
     pub notice: String,
 }
 
+impl View {
+    /// Select the same one-based result number displayed by a CLI listing.
+    pub fn result(&self, number: usize, filter: Option<&Filter>) -> Result<(&Day, usize)> {
+        ensure!(number > 0, "Result numbers start at 1");
+        self.days
+            .iter()
+            .flat_map(|day| {
+                day.numbered()
+                    .into_iter()
+                    .enumerate()
+                    .filter(move |(_, item)| filter.is_none_or(|filter| filter.matches(item)))
+                    .map(move |(index, _)| (day, index + 1))
+            })
+            .nth(number - 1)
+            .with_context(|| {
+                format!("No result {number}; rerun the search or listing to see current results")
+            })
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct Filter {
     pub query: String,
@@ -179,14 +199,23 @@ pub fn letter_number(label: &str) -> Result<usize> {
 }
 
 pub fn render(view: &View, today: NaiveDate) -> String {
-    render_view(view, today, None)
+    render_view(view, today, None, false)
+}
+
+pub fn render_list(view: &View, today: NaiveDate) -> String {
+    render_view(view, today, None, true)
 }
 
 pub fn render_filtered(view: &View, today: NaiveDate, filter: &Filter) -> String {
-    render_view(view, today, Some(filter))
+    render_view(view, today, Some(filter), true)
 }
 
-fn render_view(view: &View, today: NaiveDate, filter: Option<&Filter>) -> String {
+fn render_view(
+    view: &View,
+    today: NaiveDate,
+    filter: Option<&Filter>,
+    result_numbers: bool,
+) -> String {
     let mut output = String::new();
     if !view.notice.is_empty() {
         let _ = writeln!(output, "{}\n", view.notice);
@@ -198,6 +227,7 @@ fn render_view(view: &View, today: NaiveDate, filter: Option<&Filter>) -> String
         return output;
     }
     let mut historical_index = 0;
+    let mut result_number = 0;
     for day in &view.days {
         let is_active = Some(day.date) == view.active;
         let mut labels = vec![];
@@ -236,10 +266,18 @@ fn render_view(view: &View, today: NaiveDate, filter: Option<&Filter>) -> String
                     historical_index += 1;
                     label
                 };
-                let _ = writeln!(output, "    {label}. {}", item.title);
+                if result_numbers {
+                    result_number += 1;
+                    let _ = writeln!(output, "    [{result_number}] {label}. {}", item.title);
+                } else {
+                    let _ = writeln!(output, "    {label}. {}", item.title);
+                }
             }
         }
         output.push('\n');
+    }
+    if result_numbers && result_number > 0 {
+        output.push_str("Append `--repeat N` to this command to copy result [N] into active To do. Results are recomputed on each run.\n");
     }
     if filter.is_some() {
         output.push_str("Copy a match: `krk repeat NUMBER` (active), or `krk repeat --from YYYY-MM-DD LETTER` (history).\n");

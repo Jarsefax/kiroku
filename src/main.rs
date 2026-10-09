@@ -54,6 +54,12 @@ enum Command {
             help = "Show only this status; searches all history unless PERIOD is given"
         )]
         status: Option<CliStatus>,
+        #[arg(
+            long,
+            value_name = "RESULT_NUMBER",
+            help = "Copy the numbered result into active To do; results are recomputed on this run"
+        )]
+        repeat: Option<usize>,
     },
     /// Search titles across all recorded days, or within a selected period
     Search {
@@ -66,6 +72,12 @@ enum Command {
         period: Option<String>,
         #[arg(long, value_enum)]
         status: Option<CliStatus>,
+        #[arg(
+            long,
+            value_name = "RESULT_NUMBER",
+            help = "Copy the numbered result into active To do; results are recomputed on this run"
+        )]
+        repeat: Option<usize>,
     },
     /// Add a title, or move a numbered active-day item into Doing
     Doing {
@@ -158,11 +170,43 @@ fn filtered_list(
     period: Option<&str>,
     query: &str,
     status: Option<CliStatus>,
+    repeat: Option<usize>,
     today: chrono::NaiveDate,
 ) -> Result<()> {
     let filter = listing::Filter::new(query, status.map(Into::into))?;
     let view = listing::select_filtered(store, period, today, &filter)?;
-    output(&listing::render_filtered(&view, today, &filter))
+    show_or_repeat(store, view, Some(&filter), repeat, today)
+}
+
+fn show_or_repeat(
+    store: &Store,
+    view: View,
+    filter: Option<&listing::Filter>,
+    repeat: Option<usize>,
+    today: chrono::NaiveDate,
+) -> Result<()> {
+    if let Some(result) = repeat {
+        let (source, number) = view.result(result, filter)?;
+        let active = store
+            .active()?
+            .context("No day has been started. Run `krk new-day` first")?;
+        anyhow::ensure!(
+            Some(active.date) == view.active,
+            "The active day changed during the search or listing. Rerun the command"
+        );
+        let from = (source.date != active.date).then_some(source.date);
+        let day = store.repeat(from, number, Status::Todo, Some(source), Some(&active))?;
+        output(&format!(
+            "Repeated result {result} from {}: {}\n\n",
+            source.date,
+            source.numbered()[number - 1].title
+        ))?;
+        return updated(day, today);
+    }
+    output(&match filter {
+        Some(filter) => listing::render_filtered(&view, today, filter),
+        None => listing::render_list(&view, today),
+    })
 }
 
 fn run() -> Result<()> {
@@ -176,13 +220,15 @@ fn run() -> Result<()> {
             query,
             period,
             status,
+            repeat,
         }) => {
-            return filtered_list(&store, period.as_deref(), &query, status, today);
+            return filtered_list(&store, period.as_deref(), &query, status, repeat, today);
         }
         Some(Command::List {
             period,
             search,
             status,
+            repeat,
         }) => {
             if search.is_some() || status.is_some() {
                 return filtered_list(
@@ -190,13 +236,17 @@ fn run() -> Result<()> {
                     period.as_deref(),
                     search.as_deref().unwrap_or(""),
                     status,
+                    repeat,
                     today,
                 );
             }
-            return output(&listing::render(
-                &listing::select(&store, period.as_deref(), today)?,
+            return show_or_repeat(
+                &store,
+                listing::select(&store, period.as_deref(), today)?,
+                None,
+                repeat,
                 today,
-            ));
+            );
         }
         Some(Command::NewDay) => {
             let created = store.new_day(today)?;
