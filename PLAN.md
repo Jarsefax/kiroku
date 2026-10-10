@@ -37,6 +37,10 @@ meeting" or "monthly op meeting - september".
 - Each day has three sections: To do, Doing, and Done.
 - Start a new day only through an explicit command. Opening the app or
   crossing midnight does not start a new day automatically.
+- Exception: when no active day exists, adding a title creates today and
+  saves the item in one update, including when only future records exist.
+  This applies to CLI title additions and the TUI add prompt; cancelling
+  the prompt or submitting an invalid title does not create a day.
 - Until a new day is manually started, additions and status changes apply
   to the last started day, including after midnight or a gap of several days.
   This is the initial behavior and can be revisited after use.

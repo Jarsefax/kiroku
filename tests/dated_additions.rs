@@ -323,7 +323,7 @@ fn starting_today_with_future_records_carries_only_earlier_work_and_is_idempoten
 }
 
 #[test]
-fn future_only_logs_require_starting_today_before_default_additions() {
+fn future_only_logs_start_today_on_default_addition() {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::new(temp.path().to_path_buf());
     let today = chrono::Local::now().date_naive();
@@ -335,18 +335,17 @@ fn future_only_logs_require_starting_today_before_default_additions() {
         )
         .unwrap();
     assert!(store.active().unwrap().is_none());
-    assert!(
-        store
-            .change(Change::Add("default".into(), Status::Todo), None)
-            .unwrap_err()
-            .to_string()
-            .contains("new-day")
-    );
     assert!(store.repeat(None, 1, Status::Todo, None, None).is_err());
-    assert!(store.new_day(today).unwrap());
+    store
+        .change(Change::Add("default".into(), Status::Todo), None)
+        .unwrap();
+    assert!(!store.new_day(today).unwrap());
     assert_eq!(store.active().unwrap().unwrap().date, today);
-    assert!(store.active().unwrap().unwrap().items.is_empty());
-    assert_eq!(store.days(None).unwrap().len(), 2);
+    assert_eq!(store.active().unwrap().unwrap().items[0].title, "default");
+    let days = store.days(None).unwrap();
+    assert_eq!(days.len(), 2);
+    assert_eq!(days[1].items.len(), 1);
+    assert_eq!(days[1].items[0].title, "future plan");
 }
 
 #[test]

@@ -7,7 +7,6 @@ Markdown files. No database and no timestamps on items.
 ## Getting started
 
 ```sh
-krk new-day
 krk todo "weekly meeting"
 krk todo "monthly op meeting - september"
 krk list
@@ -22,6 +21,9 @@ updated active day; use the numbers from that output for the next command.
 Numbers are unique across all three sections of the active day.
 
 Run `krk --help` or `krk COMMAND --help` for command help.
+
+Your first title addition starts today automatically if there is no active
+day. Use `krk new-day` to start subsequent days and carry unfinished work forward.
 
 ## Commands
 
@@ -78,8 +80,9 @@ the usual backups and storage-version checks.
 Without `--date`, commands use the latest recorded day **on or before today**.
 Future records are excluded from the active-day selection until their dates
 arrive. Adding to an older or future date leaves the current default
-destination unchanged. If only future records exist, commands without
-`--date` ask you to run `krk new-day` first. `new-day` can start today even
+destination unchanged. If there is no active day, adding a title without
+`--date` creates today, including when only future records exist. Commands
+that move or copy existing items still require an active day. `new-day` can start today even
 when future records already exist, and carries items only from an earlier
 eligible day. A day already filled using `--date` is left unchanged.
 
@@ -124,7 +127,10 @@ another entry, even if the active day already contains that title.
 Opening Kiroku, listing items, and crossing midnight do **not** start a day.
 Without `--date`, additions and changes apply to the latest recorded day
 on or before today, even after a weekend or across a month boundary. Dates use your local
-timezone. The first day started through `new-day` starts empty.
+timezone. When no active day exists, adding a title creates today and saves
+the item in one update. This works with `todo`, `doing`, `done`, and the TUI's
+`a` key. Cancelling an add prompt leaves the log unchanged.
+The first day started through `new-day` starts empty.
 
 Starting a new day copies the previous recorded day's To do and Doing items
 into the new day's To do section. Done items stay behind. Earlier records

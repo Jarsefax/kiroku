@@ -223,13 +223,19 @@ impl App {
     }
 
     fn apply(&mut self, change: Change) -> Result<()> {
+        let first_add = matches!(change, Change::Add(..)) && self.active().is_none();
         ensure!(
-            self.editable(),
+            self.editable() || first_add,
             "Only the active day is editable in the TUI; edit other dates in their Markdown files directly"
         );
-        let expected = self.day().cloned();
+        let expected = if first_add { None } else { self.day().cloned() };
         self.store.change(change, expected.as_ref())?;
         self.reload()?;
+        if first_add {
+            self.current = self.active_index().unwrap_or(0);
+            self.selected = 0;
+            self.list_state = ListState::default();
+        }
         self.message = "Saved. Item numbers may have changed.".into();
         Ok(())
     }
@@ -407,8 +413,8 @@ impl App {
             KeyCode::Char('n') => self.start_today()?,
             KeyCode::Char('a') => {
                 ensure!(
-                    self.editable(),
-                    "Start a day with n, or navigate to the active day to add items"
+                    self.editable() || self.active().is_none(),
+                    "Navigate to the active day to add items"
                 );
                 self.input.clear();
                 self.suggestion = None;
@@ -478,7 +484,7 @@ impl App {
                         "  |  today"
                     }
                 ),
-                None => "Kiroku  |  No recorded days — press n to start today".into(),
+                None => "Kiroku  |  No recorded days — press a to add your first item".into(),
             }
         };
         frame.render_widget(
@@ -545,7 +551,7 @@ impl App {
                 }
             }
         } else {
-            rows.push(ListItem::new("No days are created automatically."));
+            rows.push(ListItem::new("Adding your first item starts today."));
         }
         self.list_state.select(selected_row);
         let title = self.search.as_ref().map_or_else(
@@ -753,6 +759,35 @@ mod tests {
     }
 
     #[test]
+    fn first_add_prompt_creates_today_only_when_saved() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().join("logs"));
+        let mut app = app(store.clone());
+        assert!(!store.dir.exists());
+        press(&mut app, KeyCode::Char('a'));
+        assert!(matches!(app.prompt, Some(Prompt::Add)));
+        press(&mut app, KeyCode::Esc);
+        assert!(!store.dir.exists());
+        press(&mut app, KeyCode::Char('a'));
+        assert!(
+            app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+                .is_err()
+        );
+        assert!(store.active().unwrap().is_none());
+        for c in "first todo".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Enter);
+        assert!(app.prompt.is_none());
+        assert!(app.editable());
+        assert_eq!(app.day().unwrap().date, Local::now().date_naive());
+        let day = store.active().unwrap().unwrap();
+        assert_eq!(day.items.len(), 1);
+        assert_eq!(day.items[0].title, "first todo");
+        assert_eq!(day.items[0].status, Status::Todo);
+    }
+
+    #[test]
     fn future_records_do_not_redirect_tui_edits_copies_or_start_today() {
         let temp = tempfile::tempdir().unwrap();
         let store = Store::new(temp.path().to_path_buf());
@@ -789,7 +824,7 @@ mod tests {
     }
 
     #[test]
-    fn future_only_tui_has_no_editable_day_until_today_is_started() {
+    fn future_only_tui_addition_starts_today_and_selects_it() {
         let temp = tempfile::tempdir().unwrap();
         let store = Store::new(temp.path().to_path_buf());
         let today = Local::now().date_naive();
@@ -809,10 +844,19 @@ mod tests {
                 .to_string()
                 .contains("new-day")
         );
-        press(&mut app, KeyCode::Char('n'));
+        press(&mut app, KeyCode::Char('a'));
+        for c in "today todo".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Enter);
         assert_eq!(app.day().unwrap().date, today);
         assert!(app.editable());
-        assert!(store.active().unwrap().unwrap().items.is_empty());
+        assert_eq!(
+            store.active().unwrap().unwrap().items[0].title,
+            "today todo"
+        );
+        let days = store.days(None).unwrap();
+        assert_eq!(days[1].items[0].title, "future plan");
     }
 
     #[test]

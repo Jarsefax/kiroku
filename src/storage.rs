@@ -511,9 +511,21 @@ impl Store {
 
     pub fn change(&self, change: Change, expected: Option<&Day>) -> Result<Day> {
         let _lock = self.lock()?;
-        let (mut document, day_index) = self
-            .active_document_on(Local::now().date_naive())?
-            .context("No day has been started. Run `krk new-day` first")?;
+        let today = Local::now().date_naive();
+        let active = self.active_document_on(today)?;
+        let (mut document, day_index) = match active {
+            Some(active) => active,
+            None => {
+                ensure!(
+                    expected.is_none(),
+                    "The active day changed outside this view. Reload it before editing"
+                );
+                if let Change::Add(title, status) = change {
+                    return self.insert_on_date(today, validate_title(&title)?, status);
+                }
+                bail!("No day has been started. Run `krk new-day` first");
+            }
+        };
         let day = &document.days[day_index];
         if let Some(expected) = expected {
             ensure!(

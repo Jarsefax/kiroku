@@ -267,12 +267,40 @@ fn reading_empty_store_does_not_create_anything() {
     assert!(view.days.is_empty());
     assert!(view.notice.contains("No recorded days"));
     assert!(!store.dir.exists());
-    assert!(
-        store
-            .change(Change::Add("meeting".into(), Status::Todo), None)
-            .is_err()
-    );
-    assert!(store.active().unwrap().is_none());
+}
+
+#[test]
+fn first_addition_starts_today_in_any_status() {
+    for status in Status::ALL {
+        let (_temp, store) = fixture();
+        let day = store
+            .change(Change::Add("  meeting 日本語  ".into(), status), None)
+            .unwrap();
+        assert_eq!(day.date, chrono::Local::now().date_naive());
+        assert_eq!(day.items.len(), 1);
+        assert_eq!(day.items[0].title, "meeting 日本語");
+        assert_eq!(day.items[0].status, status);
+        assert_eq!(store.days(None).unwrap().len(), 1);
+        assert!(!store.dir.join("backups").exists());
+        assert!(!store.new_day(day.date).unwrap());
+    }
+}
+
+#[test]
+fn invalid_first_additions_and_numbered_changes_do_not_create_a_day() {
+    for change in [
+        Change::Add("  ".into(), Status::Todo),
+        Change::Add("bad\ntitle".into(), Status::Doing),
+        Change::Move(1, Status::Done),
+        Change::Edit(1, "renamed".into()),
+        Change::Remove(1),
+    ] {
+        let (_temp, store) = fixture();
+        assert!(store.change(change, None).is_err());
+        assert!(store.active().unwrap().is_none());
+        assert!(store.days(None).unwrap().is_empty());
+        assert!(!store.dir.join("backups").exists());
+    }
 }
 
 #[test]

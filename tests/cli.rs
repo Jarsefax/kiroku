@@ -25,6 +25,25 @@ fn success(directory: &std::path::Path, args: &[&str]) -> String {
 }
 
 #[test]
+fn first_title_addition_starts_today_for_each_status_command() {
+    for (command, status) in [
+        ("todo", Status::Todo),
+        ("doing", Status::Doing),
+        ("done", Status::Done),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let logs = temp.path().join("logs");
+        let output = success(&logs, &[command, "first item"]);
+        assert!(output.contains("1. first item"));
+        let store = Store::new(logs);
+        let day = store.active().unwrap().unwrap();
+        assert_eq!(day.date, Local::now().date_naive());
+        assert_eq!(day.items.len(), 1);
+        assert_eq!(day.items[0].status, status);
+    }
+}
+
+#[test]
 fn date_option_adds_all_statuses_and_keeps_older_dates_out_of_the_active_day() {
     let temp = tempfile::tempdir().unwrap();
     let logs = temp.path();
@@ -184,7 +203,7 @@ fn future_dates_do_not_capture_default_additions_moves_copies_or_new_day() {
 }
 
 #[test]
-fn future_only_cli_requires_starting_today_for_commands_without_a_date() {
+fn future_only_cli_starts_today_when_adding_a_title() {
     let temp = tempfile::tempdir().unwrap();
     let logs = temp.path();
     let today = Local::now().date_naive();
@@ -194,8 +213,7 @@ fn future_only_cli_requires_starting_today_for_commands_without_a_date() {
     let path = logs.join(format!("{}.md", future.format("%Y-%m")));
     let original = fs::read(&path).unwrap();
     for args in [
-        &["todo", "default"][..],
-        &["repeat", "1"],
+        &["repeat", "1"][..],
         &["search", "future plan", "--repeat", "1"],
     ] {
         let result = run(logs, args);
@@ -203,11 +221,9 @@ fn future_only_cli_requires_starting_today_for_commands_without_a_date() {
         assert!(String::from_utf8_lossy(&result.stderr).contains("new-day"));
         assert_eq!(fs::read(&path).unwrap(), original);
     }
-    success(logs, &["new-day"]);
+    success(logs, &["todo", "default"]);
     let store = Store::new(logs.to_path_buf());
     assert_eq!(store.active().unwrap().unwrap().date, today);
-    assert!(store.active().unwrap().unwrap().items.is_empty());
-    success(logs, &["todo", "default"]);
     assert_eq!(store.active().unwrap().unwrap().items[0].title, "default");
     assert_eq!(fs::read(path).unwrap(), original);
 }
@@ -661,8 +677,6 @@ fn real_cli_workflow_with_unicode_duplicate_titles_and_errors() {
     let logs = temp.path().join("log directory with spaces");
     assert_eq!(success(&logs, &["path"]).trim(), logs.to_str().unwrap());
     assert!(!logs.exists());
-    assert!(!run(&logs, &["todo", "meeting"]).status.success());
-    success(&logs, &["new-day"]);
     success(&logs, &["todo", "monthly op meeting - september"]);
     success(&logs, &["todo", "weekly meeting"]);
     success(&logs, &["todo", "weekly meeting"]);
@@ -743,8 +757,6 @@ fn every_status_command_adds_titles_and_moves_existing_items() {
     ] {
         let temp = tempfile::tempdir().unwrap();
         let logs = temp.path();
-        assert!(!run(logs, &[command, "meeting"]).status.success());
-        success(logs, &["new-day"]);
         success(logs, &[command, "möte 日本語 123"]);
         let store = Store::new(logs.to_path_buf());
         let day = store.active().unwrap().unwrap();
