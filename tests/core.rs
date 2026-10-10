@@ -124,7 +124,7 @@ fn repeat_history_preserves_source_bytes_within_and_across_months() {
         if source_date.month() == 9 {
             assert_eq!(text, original);
         } else {
-            assert!(text.starts_with(&original));
+            assert!(text.starts_with(&format!("<!-- kiroku-format: 1 -->\r\n\r\n{original}")));
             assert!(!text.replace("\r\n", "").contains('\n'));
         }
         assert!(
@@ -543,7 +543,7 @@ fn comments_blank_lines_crlf_and_previous_days_survive_mutations() {
         .change(Change::Add("new title".into(), Status::Todo), None)
         .unwrap();
     let result = fs::read_to_string(store.dir.join("2026-10.md")).unwrap();
-    assert!(result.starts_with(prefix));
+    assert!(result.starts_with(&format!("<!-- kiroku-format: 1 -->\r\n\r\n{prefix}")));
     assert!(result.contains("<!-- keep this comment -->\r\n"));
     assert!(result.contains("- möte 日本語\r\n"));
     assert!(!result.replace("\r\n", "").contains('\n'));

@@ -140,6 +140,12 @@ These defaults were adopted for the first implementation.
 - Dates must be unique and chronological within the correct monthly file.
   Each day must have the three status headings in To do, Doing, Done order.
   Titles are nonempty single-line text; Unicode and duplicate titles work.
+- Version the monthly Markdown format independently of app releases. Format 1
+  uses one `<!-- kiroku-format: 1 -->` header before the first date heading.
+  Validate unmarked legacy files as format 1 and annotate only on an actual
+  update, preserving original bytes in the usual backup. Reads and no-op
+  commands leave files unchanged. Reject unsupported formats and malformed,
+  duplicate, or misplaced version headers before using the file.
 - Use atomic file replacement and serialize app writes with a directory lock.
   Reject stale TUI item selections after external edits and provide reload.
 - Before replacing an existing monthly file, save and flush its exact previous
@@ -160,6 +166,8 @@ These defaults were adopted for the first implementation.
 Example monthly file:
 
 ```markdown
+<!-- kiroku-format: 1 -->
+
 # 2026-10-06
 
 ## To do
@@ -186,6 +194,9 @@ needed for the current operation.
 
 ## Deferred features
 
+- Data conversions when a future storage format requires them. Migrations
+  must validate data, be repeatable and recoverable after interruption, and
+  retain separate snapshots outside ordinary rotating backup cleanup.
 - Reordering items through the app (manual file editing is available).
 - Historical editing through the app (manual file editing is available).
 - Starting a day for a supplied date.

@@ -6,6 +6,30 @@ use std::{
     path::PathBuf,
 };
 
+// Independent of the application release version in Cargo.toml.
+const STORAGE_FORMAT_VERSION: u32 = 1;
+
+fn parse_format_version(comment: &str) -> Result<u32> {
+    let invalid = || "Invalid kiroku-format header; expected <!-- kiroku-format: 1 -->";
+    let value = comment
+        .strip_prefix("kiroku-format:")
+        .and_then(|text| text.strip_suffix("-->"))
+        .map(str::trim)
+        .with_context(invalid)?;
+    ensure!(
+        !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()),
+        "{}",
+        invalid()
+    );
+    let version: u32 = value.parse().with_context(invalid)?;
+    ensure!(version > 0, "{}", invalid());
+    ensure!(
+        version == STORAGE_FORMAT_VERSION,
+        "Storage format {version} is unsupported; this app supports format {STORAGE_FORMAT_VERSION}. Upgrade Kiroku before reading or changing this file"
+    );
+    Ok(version)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
     Todo,
@@ -90,6 +114,7 @@ struct Document {
     lines: Vec<String>,
     days: Vec<Day>,
     newline: &'static str,
+    has_format_header: bool,
 }
 
 impl Document {
@@ -106,6 +131,7 @@ impl Document {
         let mut days: Vec<Day> = vec![];
         let mut status = None;
         let mut in_comment = false;
+        let mut has_format_header = false;
         for (index, raw) in lines.iter().enumerate() {
             let line = raw.trim_end_matches(['\r', '\n']);
             let trimmed = line.trim();
@@ -123,7 +149,25 @@ impl Document {
                 }
                 continue;
             }
-            if trimmed.starts_with("<!--") {
+            if let Some(comment) = trimmed.strip_prefix("<!--") {
+                let comment = comment.trim_start();
+                if comment.starts_with("kiroku-format") {
+                    ensure!(
+                        !has_format_header,
+                        "{}:{}: duplicate kiroku-format header",
+                        path.display(),
+                        index + 1
+                    );
+                    ensure!(
+                        days.is_empty(),
+                        "{}:{}: kiroku-format header must precede the first date heading",
+                        path.display(),
+                        index + 1
+                    );
+                    parse_format_version(comment)
+                        .with_context(|| format!("{}:{}", path.display(), index + 1))?;
+                    has_format_header = true;
+                }
                 if let Some((_, tail)) = trimmed.split_once("-->") {
                     ensure!(tail.trim().is_empty(), "{}", invalid());
                 } else {
@@ -215,6 +259,7 @@ impl Document {
             lines,
             days,
             newline,
+            has_format_header,
         })
     }
 
@@ -240,7 +285,16 @@ impl Document {
     }
 
     fn save(&self) -> Result<()> {
-        crate::persistence::save(&self.path, self.original.as_deref(), &self.lines.concat())
+        let mut contents = self.lines.concat();
+        // Legacy files are format 1 after validation. Annotate only an actual
+        // change, so reads and no-op edits never rewrite or back up a file.
+        if !self.has_format_header && self.original.as_deref() != Some(contents.as_str()) {
+            contents = format!(
+                "<!-- kiroku-format: {STORAGE_FORMAT_VERSION} -->{}{}{contents}",
+                self.newline, self.newline
+            );
+        }
+        crate::persistence::save(&self.path, self.original.as_deref(), &contents)
     }
 }
 

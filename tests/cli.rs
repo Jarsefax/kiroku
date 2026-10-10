@@ -25,6 +25,48 @@ fn success(directory: &std::path::Path, args: &[&str]) -> String {
 }
 
 #[test]
+fn storage_version_checks_reach_cli_errors_and_preserve_logs() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    let path = logs.join("2026-10.md");
+    let legacy = include_str!("fixtures/storage/legacy-v1.md");
+    fs::write(&path, legacy).unwrap();
+    assert!(success(logs, &["list", "2026-10-06"]).contains("plan café 日本語"));
+    assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
+    success(logs, &["edit", "1", "updated title"]);
+    let supported = fs::read_to_string(&path).unwrap();
+    assert!(supported.starts_with("<!-- kiroku-format: 1 -->\n"));
+    let backup_path = logs.join("backups/2026-10.md.000001.bak");
+    assert_eq!(fs::read_to_string(&backup_path).unwrap(), legacy);
+
+    let future = supported.replacen("kiroku-format: 1", "kiroku-format: 2", 1);
+    fs::write(&path, &future).unwrap();
+    for args in [
+        &["list", "2026-10-06"][..],
+        &["search", "updated"],
+        &["todo", "new title"],
+        &["new-day"],
+        &["repeat", "1"],
+    ] {
+        let result = run(logs, args);
+        assert!(!result.status.success(), "{args:?}");
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(error.contains("2026-10.md:1"), "{error}");
+        assert!(error.contains("Storage format 2 is unsupported"), "{error}");
+        assert!(error.contains("Upgrade Kiroku"), "{error}");
+        assert!(result.stdout.is_empty());
+        assert_eq!(fs::read_to_string(&path).unwrap(), future);
+        assert_eq!(fs::read_dir(logs.join("backups")).unwrap().count(), 1);
+        assert_eq!(fs::read_to_string(&backup_path).unwrap(), legacy);
+    }
+    // App version reporting does not require opening or converting logs.
+    assert_eq!(
+        success(logs, &["--version"]),
+        format!("krk {}\n", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
 fn repeat_cli_copies_active_and_date_scoped_historical_items() {
     let temp = tempfile::tempdir().unwrap();
     let logs = temp.path();
