@@ -1,7 +1,7 @@
 mod tui;
 
 use anyhow::{Context, Result};
-use chrono::Local;
+use chrono::{Local, NaiveDate};
 use clap::{Parser, Subcommand, ValueEnum};
 use kiroku::{
     config,
@@ -31,6 +31,24 @@ struct Args {
     command: Option<Command>,
 }
 
+#[derive(clap::Args)]
+struct AddTarget {
+    #[arg(long, value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Add to this date instead of the active day")]
+    date: Option<NaiveDate>,
+}
+
+#[derive(clap::Args)]
+struct CopyResult {
+    #[arg(
+        long,
+        value_name = "RESULT_NUMBER",
+        help = "Copy the numbered result into To do; results are recomputed on this run"
+    )]
+    repeat: Option<usize>,
+    #[arg(long, requires = "repeat", value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Copy to this date instead of the active day (requires --repeat)")]
+    date: Option<NaiveDate>,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Explicitly start today and carry unfinished items into To do
@@ -54,12 +72,8 @@ enum Command {
             help = "Show only this status; searches all history unless PERIOD is given"
         )]
         status: Option<CliStatus>,
-        #[arg(
-            long,
-            value_name = "RESULT_NUMBER",
-            help = "Copy the numbered result into active To do; results are recomputed on this run"
-        )]
-        repeat: Option<usize>,
+        #[command(flatten)]
+        copy: CopyResult,
     },
     /// Search titles across all recorded days, or within a selected period
     Search {
@@ -72,27 +86,29 @@ enum Command {
         period: Option<String>,
         #[arg(long, value_enum)]
         status: Option<CliStatus>,
-        #[arg(
-            long,
-            value_name = "RESULT_NUMBER",
-            help = "Copy the numbered result into active To do; results are recomputed on this run"
-        )]
-        repeat: Option<usize>,
+        #[command(flatten)]
+        copy: CopyResult,
     },
     /// Add a title, or move a numbered active-day item into Doing
     Doing {
         #[arg(value_name = "TITLE_OR_NUMBER")]
         value: String,
+        #[command(flatten)]
+        target: AddTarget,
     },
     /// Add a title, or move a numbered active-day item into Done
     Done {
         #[arg(value_name = "TITLE_OR_NUMBER")]
         value: String,
+        #[command(flatten)]
+        target: AddTarget,
     },
     /// Add a title, or move a numbered active-day item back into To do
     Todo {
         #[arg(value_name = "TITLE_OR_NUMBER")]
         value: String,
+        #[command(flatten)]
+        target: AddTarget,
     },
     /// Copy an item into the active day, preserving its original entry
     Repeat {
@@ -101,7 +117,7 @@ enum Command {
             help = "Active-day number, or a letter from a single-date listing with --from"
         )]
         item: String,
-        #[arg(long, value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Copy from an earlier recorded day; letters are scoped to this date")]
+        #[arg(long, value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Copy from another recorded day; letters are scoped to this date")]
         from: Option<chrono::NaiveDate>,
         #[arg(
             long,
@@ -110,6 +126,8 @@ enum Command {
             help = "Status of the new copy"
         )]
         status: CliStatus,
+        #[command(flatten)]
+        target: AddTarget,
     },
     /// Rename an active-day item
     Edit { number: usize, title: String },
@@ -165,28 +183,60 @@ fn updated(day: Day, today: chrono::NaiveDate) -> Result<()> {
     ))
 }
 
+fn updated_date(day: Day) -> Result<()> {
+    // A targeted historical addition must not advertise active-day numbers.
+    let mut text = format!("Updated {}.\n\n", day.date);
+    for status in Status::ALL {
+        text.push_str(&format!("  {}\n", status.label()));
+        let mut empty = true;
+        for item in day.items.iter().filter(|item| item.status == status) {
+            text.push_str(&format!("    - {}\n", item.title));
+            empty = false;
+        }
+        if empty {
+            text.push_str("    (empty)\n");
+        }
+    }
+    output(&text)
+}
+
 fn filtered_list(
     store: &Store,
     period: Option<&str>,
     query: &str,
     status: Option<CliStatus>,
-    repeat: Option<usize>,
+    copy: CopyResult,
     today: chrono::NaiveDate,
 ) -> Result<()> {
     let filter = listing::Filter::new(query, status.map(Into::into))?;
     let view = listing::select_filtered(store, period, today, &filter)?;
-    show_or_repeat(store, view, Some(&filter), repeat, today)
+    show_or_repeat(store, view, Some(&filter), copy, today)
 }
 
 fn show_or_repeat(
     store: &Store,
     view: View,
     filter: Option<&listing::Filter>,
-    repeat: Option<usize>,
+    copy: CopyResult,
     today: chrono::NaiveDate,
 ) -> Result<()> {
-    if let Some(result) = repeat {
+    if let Some(result) = copy.repeat {
         let (source, number) = view.result(result, filter)?;
+        if let Some(date) = copy.date {
+            let day = store.repeat_on_date(
+                date,
+                Some(source.date),
+                number,
+                Status::Todo,
+                Some(source),
+            )?;
+            output(&format!(
+                "Repeated result {result} from {}: {}\n\n",
+                source.date,
+                source.numbered()[number - 1].title
+            ))?;
+            return updated_date(day);
+        }
         let active = store
             .active()?
             .context("No day has been started. Run `krk new-day` first")?;
@@ -213,22 +263,22 @@ fn run() -> Result<()> {
     let args = Args::parse();
     let store = Store::new(config::resolve(args.data_dir.as_deref())?);
     let today = Local::now().date_naive();
-    let change = match args.command {
+    let (change, date) = match args.command {
         None => return tui::run(store),
         Some(Command::Path) => return output(&format!("{}\n", store.dir.display())),
         Some(Command::Search {
             query,
             period,
             status,
-            repeat,
+            copy,
         }) => {
-            return filtered_list(&store, period.as_deref(), &query, status, repeat, today);
+            return filtered_list(&store, period.as_deref(), &query, status, copy, today);
         }
         Some(Command::List {
             period,
             search,
             status,
-            repeat,
+            copy,
         }) => {
             if search.is_some() || status.is_some() {
                 return filtered_list(
@@ -236,7 +286,7 @@ fn run() -> Result<()> {
                     period.as_deref(),
                     search.as_deref().unwrap_or(""),
                     status,
-                    repeat,
+                    copy,
                     today,
                 );
             }
@@ -244,7 +294,7 @@ fn run() -> Result<()> {
                 &store,
                 listing::select(&store, period.as_deref(), today)?,
                 None,
-                repeat,
+                copy,
                 today,
             );
         }
@@ -263,10 +313,17 @@ fn run() -> Result<()> {
                 today,
             ));
         }
-        Some(Command::Doing { value }) => status_change(value, Status::Doing)?,
-        Some(Command::Done { value }) => status_change(value, Status::Done)?,
-        Some(Command::Todo { value }) => status_change(value, Status::Todo)?,
-        Some(Command::Repeat { item, from, status }) => {
+        Some(Command::Doing { value, target }) => {
+            (status_change(value, Status::Doing)?, target.date)
+        }
+        Some(Command::Done { value, target }) => (status_change(value, Status::Done)?, target.date),
+        Some(Command::Todo { value, target }) => (status_change(value, Status::Todo)?, target.date),
+        Some(Command::Repeat {
+            item,
+            from,
+            status,
+            target,
+        }) => {
             let number = if from.is_some() {
                 listing::letter_number(&item)?
             } else {
@@ -276,14 +333,31 @@ fn run() -> Result<()> {
                 );
                 item.parse().context("Item number is too large")?
             };
+            if let Some(date) = target.date {
+                return updated_date(store.repeat_on_date(
+                    date,
+                    from,
+                    number,
+                    status.into(),
+                    None,
+                )?);
+            }
             return updated(
                 store.repeat(from, number, status.into(), None, None)?,
                 today,
             );
         }
-        Some(Command::Edit { number, title }) => Change::Edit(number, title),
-        Some(Command::Remove { number }) => Change::Remove(number),
+        Some(Command::Edit { number, title }) => (Change::Edit(number, title), None),
+        Some(Command::Remove { number }) => (Change::Remove(number), None),
     };
+    if let Some(date) = date {
+        let Change::Add(title, status) = change else {
+            anyhow::bail!(
+                "--date adds titles or copies items; numbered moves still apply to the active day"
+            );
+        };
+        return updated_date(store.add_on_date(date, &title, status)?);
+    }
     updated(store.change(change, None)?, today)
 }
 

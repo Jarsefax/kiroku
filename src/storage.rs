@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail, ensure};
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, Local, NaiveDate};
 use fs2::FileExt;
 use std::{
     fs::{self, File, OpenOptions},
@@ -67,6 +67,7 @@ pub struct Day {
     pub date: NaiveDate,
     pub items: Vec<Item>,
     headings: [usize; 3],
+    start: usize,
     end: usize,
 }
 
@@ -118,6 +119,21 @@ struct Document {
 }
 
 impl Document {
+    fn read_or_empty(path: PathBuf) -> Result<Self> {
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                ensure!(
+                    metadata.is_file(),
+                    "{} is not a regular log file",
+                    path.display()
+                );
+                Self::read(path)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::parse(path, None),
+            Err(error) => Err(error).with_context(|| format!("Cannot inspect {}", path.display())),
+        }
+    }
+
     fn read(path: PathBuf) -> Result<Self> {
         let text =
             fs::read_to_string(&path).with_context(|| format!("Cannot read {}", path.display()))?;
@@ -201,6 +217,7 @@ impl Document {
                     date,
                     items: vec![],
                     headings: [usize::MAX; 3],
+                    start: index,
                     end: lines.len(),
                 });
                 status = None;
@@ -279,12 +296,40 @@ impl Document {
             .insert(insertion, format!("- {title}{}", self.newline));
     }
 
+    fn ensure_day(&mut self, date: NaiveDate) -> Result<usize> {
+        let index = self.days.partition_point(|day| day.date < date);
+        if self.days.get(index).is_some_and(|day| day.date == date) {
+            return Ok(index);
+        }
+        let insertion = self
+            .days
+            .get(index)
+            .map_or(self.lines.len(), |day| day.start);
+        let nl = self.newline;
+        let mut lines = vec![];
+        if insertion > 0 {
+            if !self.lines[insertion - 1].ends_with('\n') {
+                self.lines[insertion - 1].push_str(nl);
+            }
+            lines.push(nl.to_owned());
+        }
+        lines.push(format!("# {date}{nl}"));
+        lines.push(nl.to_owned());
+        for status in Status::ALL {
+            lines.push(format!("## {}{nl}", status.label()));
+            lines.push(nl.to_owned());
+        }
+        self.lines.splice(insertion..insertion, lines);
+        self.reparse()?;
+        Ok(index)
+    }
+
     fn reparse(&mut self) -> Result<()> {
         self.days = Self::parse(self.path.clone(), Some(self.lines.concat()))?.days;
         Ok(())
     }
 
-    fn save(&self) -> Result<()> {
+    fn save(&self, close_previous_months: bool) -> Result<()> {
         let mut contents = self.lines.concat();
         // Legacy files are format 1 after validation. Annotate only an actual
         // change, so reads and no-op edits never rewrite or back up a file.
@@ -294,7 +339,15 @@ impl Document {
                 self.newline, self.newline
             );
         }
-        crate::persistence::save(&self.path, self.original.as_deref(), &contents)
+        if close_previous_months {
+            crate::persistence::save(&self.path, self.original.as_deref(), &contents)
+        } else {
+            crate::persistence::save_retaining_months(
+                &self.path,
+                self.original.as_deref(),
+                &contents,
+            )
+        }
     }
 }
 
@@ -346,18 +399,33 @@ impl Store {
         Ok(paths)
     }
 
-    fn active_document(&self) -> Result<Option<Document>> {
+    fn active_document_on(&self, today: NaiveDate) -> Result<Option<(Document, usize)>> {
+        let month = today.format("%Y-%m").to_string();
         for path in self.paths()?.into_iter().rev() {
+            if path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|stem| stem > month.as_str())
+            {
+                continue;
+            }
             let document = Document::read(path)?;
-            if !document.days.is_empty() {
-                return Ok(Some(document));
+            if let Some(index) = document.days.iter().rposition(|day| day.date <= today) {
+                return Ok(Some((document, index)));
             }
         }
         Ok(None)
     }
 
     pub fn active(&self) -> Result<Option<Day>> {
-        Ok(self.active_document()?.and_then(|d| d.days.last().cloned()))
+        self.active_on(Local::now().date_naive())
+    }
+
+    /// Future records do not become active until their calendar date arrives.
+    pub fn active_on(&self, today: NaiveDate) -> Result<Option<Day>> {
+        Ok(self
+            .active_document_on(today)?
+            .map(|(document, index)| document.days[index].clone()))
     }
 
     pub fn days(&self, range: Option<(NaiveDate, NaiveDate)>) -> Result<Vec<Day>> {
@@ -419,66 +487,33 @@ impl Store {
 
     pub fn new_day(&self, today: NaiveDate) -> Result<bool> {
         let _lock = self.lock()?;
-        let previous = self.active()?;
-        if let Some(day) = &previous {
-            if day.date == today {
-                return Ok(false);
-            }
-            ensure!(
-                day.date < today,
-                "The last recorded day ({}) is later than today ({today}); check your clock or log files",
-                day.date
-            );
+        let previous = self.active_on(today)?;
+        if previous.as_ref().is_some_and(|day| day.date == today) {
+            return Ok(false);
         }
         let path = self.dir.join(format!("{}.md", today.format("%Y-%m")));
-        let mut document = match Document::read(path.clone()) {
-            Ok(document) => document,
-            Err(e) if !path.exists() => {
-                // A missing file is expected; other read errors must not be hidden.
-                if e.downcast_ref::<std::io::Error>()
-                    .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound)
-                {
-                    Document::parse(path, None)?
-                } else {
-                    return Err(e);
-                }
-            }
-            Err(e) => return Err(e),
-        };
-        let nl = document.newline;
-        if let Some(last) = document.lines.last_mut() {
-            if !last.ends_with('\n') {
-                last.push_str(nl);
-            }
-            document.lines.push(nl.to_owned());
-        }
-        document.lines.push(format!("# {today}{nl}{nl}"));
-        for status in Status::ALL {
-            document.lines.push(format!("## {}{nl}", status.label()));
-            if status == Status::Todo
-                && let Some(previous) = &previous
-            {
-                for item in previous
-                    .numbered()
-                    .into_iter()
-                    .filter(|i| i.status != Status::Done)
-                {
-                    document.lines.push(format!("- {}{nl}", item.title));
-                }
-            }
-            document.lines.push(nl.to_owned());
+        let mut document = Document::read_or_empty(path)?;
+        let index = document.ensure_day(today)?;
+        if let Some(previous) = &previous {
+            let lines: Vec<_> = previous
+                .numbered()
+                .into_iter()
+                .filter(|item| item.status != Status::Done)
+                .map(|item| format!("- {}{}", item.title, document.newline))
+                .collect();
+            let insertion = document.days[index].headings[Status::Todo.index()] + 1;
+            document.lines.splice(insertion..insertion, lines);
         }
         document.reparse()?;
-        document.save()?;
+        document.save(true)?;
         Ok(true)
     }
 
     pub fn change(&self, change: Change, expected: Option<&Day>) -> Result<Day> {
         let _lock = self.lock()?;
-        let mut document = self
-            .active_document()?
+        let (mut document, day_index) = self
+            .active_document_on(Local::now().date_naive())?
             .context("No day has been started. Run `krk new-day` first")?;
-        let day_index = document.days.len() - 1;
         let day = &document.days[day_index];
         if let Some(expected) = expected {
             ensure!(
@@ -531,13 +566,65 @@ impl Store {
             }
         }
         document.reparse()?;
-        document.save()?;
+        document.save(true)?;
         Ok(document.days[day_index].clone())
     }
 
+    /// Add to an explicit date, creating an empty day without rollover.
+    pub fn add_on_date(&self, date: NaiveDate, title: &str, status: Status) -> Result<Day> {
+        let title = validate_title(title)?;
+        let _lock = self.lock()?;
+        self.insert_on_date(date, title, status)
+    }
+
+    // The caller holds the directory lock through loading, insertion and save.
+    fn insert_on_date(&self, date: NaiveDate, title: &str, status: Status) -> Result<Day> {
+        let path = self.dir.join(format!("{}.md", date.format("%Y-%m")));
+        let mut document = Document::read_or_empty(path)?;
+        let index = document.ensure_day(date)?;
+        document.insert_item(index, status, title);
+        document.reparse()?;
+        // Backfilling or planning a month does not close the active month.
+        document.save(false)?;
+        Ok(document.days[index].clone())
+    }
+
+    /// Copy from a recorded source into an explicit destination date. Without
+    /// `from`, numbers still refer to the active day, not the destination.
+    pub fn repeat_on_date(
+        &self,
+        date: NaiveDate,
+        from: Option<NaiveDate>,
+        number: usize,
+        status: Status,
+        expected_source: Option<&Day>,
+    ) -> Result<Day> {
+        let _lock = self.lock()?;
+        let source = if let Some(from) = from {
+            self.days(Some((from, from)))?
+                .pop()
+                .with_context(|| format!("No recorded day for {from}"))?
+        } else {
+            self.active()?
+                .context("No day has been started. Run `krk new-day` first")?
+        };
+        if let Some(expected) = expected_source {
+            ensure!(
+                source.matches(expected),
+                "The source day changed outside this view. Reload it before repeating"
+            );
+        }
+        let item = source
+            .numbered()
+            .get(number.wrapping_sub(1))
+            .copied()
+            .with_context(|| format!("No source item {number} on {}", source.date))?;
+        self.insert_on_date(date, &item.title, status)
+    }
+
     /// Copy a source item into the active day without changing its original entry.
-    /// Numbers are one-based within the source day. `from` selects a historical
-    /// day; None selects the active day. TUI snapshots guard both the selection
+    /// Numbers are one-based within the source day. `from` selects another
+    /// recorded day; None selects the active day. TUI snapshots guard both the selection
     /// and the destination against changes since the view was loaded.
     pub fn repeat(
         &self,
@@ -548,10 +635,9 @@ impl Store {
         expected_active: Option<&Day>,
     ) -> Result<Day> {
         let _lock = self.lock()?;
-        let mut document = self
-            .active_document()?
+        let (mut document, day_index) = self
+            .active_document_on(Local::now().date_naive())?
             .context("No day has been started. Run `krk new-day` first")?;
-        let day_index = document.days.len() - 1;
         let active = &document.days[day_index];
         if let Some(expected) = expected_active {
             ensure!(
@@ -561,8 +647,8 @@ impl Store {
         }
         let source = if let Some(date) = from {
             ensure!(
-                date < active.date,
-                "--from must select an earlier recorded day; use an active-day number otherwise"
+                date != active.date,
+                "--from must select a different recorded day; use an active-day number otherwise"
             );
             self.days(Some((date, date)))?
                 .pop()
@@ -584,7 +670,7 @@ impl Store {
             .clone();
         document.insert_item(day_index, status, &item.title);
         document.reparse()?;
-        document.save()?;
+        document.save(true)?;
         Ok(document.days[day_index].clone())
     }
 }

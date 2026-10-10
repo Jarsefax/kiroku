@@ -596,8 +596,6 @@ fn bad_numbers_and_titles_do_not_modify_log() {
         assert!(store.change(change, None).is_err());
         assert_eq!(fs::read(&path).unwrap(), before);
     }
-    assert!(store.new_day(date("2026-10-01")).is_err());
-    assert_eq!(fs::read(&path).unwrap(), before);
 }
 
 #[test]

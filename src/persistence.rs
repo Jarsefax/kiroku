@@ -147,11 +147,29 @@ pub(crate) fn save(path: &Path, original: Option<&str>, content: &str) -> Result
     save_with(&Disk, path, original, content)
 }
 
+pub(crate) fn save_retaining_months(
+    path: &Path,
+    original: Option<&str>,
+    content: &str,
+) -> Result<()> {
+    save_with_cleanup(&Disk, path, original, content, false)
+}
+
 fn save_with(
     ops: &impl Operations,
     path: &Path,
     original: Option<&str>,
     content: &str,
+) -> Result<()> {
+    save_with_cleanup(ops, path, original, content, true)
+}
+
+fn save_with_cleanup(
+    ops: &impl Operations,
+    path: &Path,
+    original: Option<&str>,
+    content: &str,
+    close_previous_months: bool,
 ) -> Result<()> {
     if original == Some(content) {
         return check_original(path, original);
@@ -237,7 +255,11 @@ fn save_with(
                 .context("Invalid log filename")?;
             let previous = versions(&directory, name)?;
             let remove_count = previous.len().saturating_sub(BACKUPS_TO_KEEP);
-            let closed = closed_month_backups(&directory, parent, name)?;
+            let closed = if close_previous_months {
+                closed_month_backups(&directory, parent, name)?
+            } else {
+                vec![]
+            };
             for (_, backup) in previous.iter().take(remove_count) {
                 ops.remove(Stage::PruneBackup, backup)?;
             }

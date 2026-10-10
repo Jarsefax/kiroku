@@ -96,8 +96,18 @@ fn new_months_have_one_header_and_rollover_keeps_history() {
     let path = store.dir.join("2026-11.md");
     assert!(fs::read_to_string(&path).unwrap().starts_with(HEADER));
     store.new_day(parse_date("2026-11-03").unwrap()).unwrap();
-    store.change(Change::Move(1, Status::Done), None).unwrap();
-    store.repeat(None, 1, Status::Todo, None, None).unwrap();
+    store
+        .add_on_date(parse_date("2026-11-03").unwrap(), "new", Status::Done)
+        .unwrap();
+    store
+        .repeat_on_date(
+            parse_date("2026-11-03").unwrap(),
+            Some(parse_date("2026-11-03").unwrap()),
+            1,
+            Status::Todo,
+            None,
+        )
+        .unwrap();
     assert_eq!(
         fs::read_to_string(&path)
             .unwrap()
@@ -231,19 +241,20 @@ fn unsupported_historical_source_cannot_be_copied_into_a_supported_file() {
 }
 
 #[test]
-fn unsupported_empty_month_cannot_be_skipped_to_find_an_older_active_day() {
+fn unsupported_empty_eligible_month_cannot_be_skipped_to_find_an_older_active_day() {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::new(temp.path().to_path_buf());
-    fs::write(store.dir.join("2026-10.md"), LEGACY).unwrap();
-    let path = store.dir.join("2026-11.md");
+    let legacy = LEGACY.replace("2026-10-", "2026-09-");
+    fs::write(store.dir.join("2026-09.md"), &legacy).unwrap();
+    let path = store.dir.join("2026-10.md");
     fs::write(&path, "<!-- kiroku-format: 2 -->\n").unwrap();
     let error = store
         .change(Change::Add("new".into(), Status::Todo), None)
         .unwrap_err();
     assert!(format!("{error:#}").contains("Upgrade Kiroku"));
     assert_eq!(
-        fs::read_to_string(store.dir.join("2026-10.md")).unwrap(),
-        LEGACY
+        fs::read_to_string(store.dir.join("2026-09.md")).unwrap(),
+        legacy
     );
     assert_eq!(
         fs::read_to_string(path).unwrap(),

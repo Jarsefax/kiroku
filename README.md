@@ -17,7 +17,7 @@ krk done 2
 krk
 ```
 
-Item numbers can change after moves or removals. Every change prints the
+Item numbers can change after moves or removals. Default changes print the
 updated active day; use the numbers from that output for the next command.
 Numbers are unique across all three sections of the active day.
 
@@ -53,6 +53,47 @@ nonempty, single-line text; Unicode and duplicate titles are supported.
 even when quoted; all other text is a new title. Invalid item numbers produce
 an error. Quote titles containing spaces.
 
+### Adding to a specific date
+
+Use `--date YYYY-MM-DD` on a command that adds a title or copies an item:
+
+```sh
+krk todo "weekly meeting" --date 2026-10-06
+krk doing "investigate issue" --date 2026-10-06
+krk done "finished yesterday" --date 2026-10-05
+krk repeat 3 --date 2026-10-05
+krk repeat --from 2026-10-02 B --date 2026-10-05 --status doing
+krk search "meeting" --repeat 2 --date 2026-10-05
+krk list 2026-10-02 --repeat 1 --date 2026-10-05
+```
+
+The date selects the destination for this command. If it has no record yet,
+Kiroku creates that day with empty sections and adds the item, without
+carrying over unfinished work or creating intervening days. Dates remain
+chronological in the appropriate monthly file. You can add to past or future
+dates, including when no day has been started. Copies still need a recorded
+source. Existing contents, comments, and line endings are preserved, with
+the usual backups and storage-version checks.
+
+Without `--date`, commands use the latest recorded day **on or before today**.
+Future records are excluded from the active-day selection until their dates
+arrive. Adding to an older or future date leaves the current default
+destination unchanged. If only future records exist, commands without
+`--date` ask you to run `krk new-day` first. `new-day` can start today even
+when future records already exist, and carries items only from an earlier
+eligible day. A day already filled using `--date` is left unchanged.
+
+`--date` is supported by `todo`, `doing`, and `done` only when adding a title;
+numeric arguments still mean active-day moves and are rejected with this
+option. It also works with `repeat`, and with `list`/`search` when `--repeat`
+is present. On `repeat`, `--from` selects the source and `--date` selects the
+destination; without `--from`, the source number refers to the active day.
+An explicit destination can precede or equal the source date. Date-targeted
+commands print the updated destination with plain bullets. Use `krk list`
+to get current numbers or date-scoped letters. `edit` and `remove` continue
+to act on the active day. The TUI also excludes future dates from the active
+day; future records can be browsed and copied but cannot be edited there.
+
 ### Reusing a title
 
 Repeating an item creates a new entry with its exact title and leaves the
@@ -66,34 +107,34 @@ krk repeat --from 2026-10-02 B
 krk repeat --from 2026-10-02 B --status doing
 ```
 
-Without `--from`, use a current active-day number. With `--from`, select an
-earlier recorded date and use its uppercase letter from `krk list YYYY-MM-DD`.
+Without `--from`, use a current active-day number. With `--from`, select
+another recorded date and use its uppercase letter from `krk list YYYY-MM-DD`.
 Letters are scoped to that single date for repeating. Search and filtered
 results use the same date-scoped letters, so you can copy a result directly.
 Labels from unfiltered multi-day listings can differ. Labels past Z work as
 AA, AB, etc. The source may be in any section.
 `--status todo|doing|done` selects the new entry's status; the
-default is To do. Copies go to the last explicitly started day, including
-when it is earlier than today. Repeating never starts a day automatically;
+default is To do. Without `--date`, copies go to the active day,
+including when it is earlier than today, and do not create a day;
 run `krk new-day` first if there are no recorded days. Each repeat creates
 another entry, even if the active day already contains that title.
 
 ### Days and rollover
 
 Opening Kiroku, listing items, and crossing midnight do **not** start a day.
-Until you run `krk new-day`, additions and changes apply to the last recorded
-day, even after a weekend or across a month boundary. Dates use your local
-timezone. The first day starts empty.
+Without `--date`, additions and changes apply to the latest recorded day
+on or before today, even after a weekend or across a month boundary. Dates use your local
+timezone. The first day started through `new-day` starts empty.
 
 Starting a new day copies the previous recorded day's To do and Doing items
 into the new day's To do section. Done items stay behind. Earlier records
 remain intact; skipped days are not created. Starting an already recorded
-today does not copy items again. Starting a date supplied on the command line
-is not supported in this version.
+today does not copy items again. `new-day` always starts today; date-targeted
+additions create missing records without this carryover.
 
-If today has not been started, `krk list` says so and shows the last recorded
-day. If today exists but is empty, it shows both today and the most recent
-earlier record. Output always labels dates and the active day. Active-day
+If today has not been started, `krk list` says so and shows the latest recorded
+day on or before today. If today exists but is empty, it shows both today
+and the most recent earlier record. Output always labels dates and the active day. Active-day
 items have numbers; historical items have letters (`A`…`Z`, `AA`, etc.).
 Historical letters cannot edit historical entries. `repeat --from` can copy
 one using its letter from a single-date listing or search/filtered results.
@@ -151,10 +192,11 @@ krk list month --search "meeting" --repeat 2
 ```
 
 `--repeat` also works with an unfiltered `krk list`, or with a status filter.
-It copies exactly one result into the active day's To do, preserving the
-source entry and exact title, and prints the copied source and updated
-active day. `--status` on a search/list command still filters source items;
-the copy always starts in To do. Invalid or missing result numbers make no
+It copies exactly one result into the active day's To do (or the destination
+selected by `--date`), preserving the source entry and exact title, and prints
+the copied source and updated destination. `--status` on a search/list
+command still filters source items; the copy always starts in To do.
+Invalid or missing result numbers make no
 changes. The separate `krk repeat` command uses the original source label,
 not the bracketed result number.
 
@@ -162,8 +204,8 @@ Results are recomputed every time the command runs. If log contents, filters,
 or relative dates change between runs, the same result number may select a
 different entry. Start today before your initial search if you want copies
 to go into today. Without `--repeat`, searches and listings are read-only
-and never start a day or change log files. With `--repeat`, they still never
-start a day automatically.
+and never start a day or change log files. With `--repeat`, they create a
+missing day only when an explicit `--date` destination is supplied.
 
 The separate repeat command remains available to copy a historical result
 into today using its source date and letter:
@@ -301,16 +343,19 @@ kiroku/
 The highest version number is the newest backup. These are ordinary text
 files, preserving comments, whitespace, line endings, and file permissions.
 After a successful update, Kiroku keeps the newest **five versions for the
-active monthly file**. When saving into a later month, it removes backups
-for earlier months whose original files still exist as regular files. The
+updated monthly file**. When a default active-day write or `new-day` saves
+into a later month, it removes backups for earlier months whose original
+files still exist as regular files. The
 original monthly files are kept unchanged. Backups with missing originals
 are kept for recovery, as are unrelated files in `backups/`. Cleanup also
 runs on later updates, so backups left from earlier months are removed on
-the next successful write. It does not back up a new file with no previous
-contents, read-only commands, or operations that make no change.
+the next successful active-day write. Explicit `--date` updates retain other
+months' backups, so planning a future month does not discard active-month
+backups. It does not back up a new file with no previous contents, read-only
+commands, or operations that make no change.
 
-The active file can still belong to a previous calendar month until you
-start a new day in a later month. Commands editing that active day create
+The active file can still belong to a previous calendar month while the
+latest record on or before today remains there. Commands editing that active day create
 backups as usual. Every replacement of an existing monthly file creates a
 backup first, regardless of the file's month or earlier backup cleanup.
 
@@ -386,6 +431,7 @@ Tests cover rollover across weekends/months, numbered duplicate titles,
 date selection and list fallback, manual comments and CRLF preservation,
 legacy and versioned logs, unsupported-format protection, malformed-file
 protection, stale selections, concurrent writes, configuration,
+date-targeted additions and copies with chronological insertion,
 CLI workflows, search/filter references and copying results into today,
 numbered search/list results with `--repeat`, repeating items across
 days/months, title suggestions, and TUI

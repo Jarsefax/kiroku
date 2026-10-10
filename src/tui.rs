@@ -1,4 +1,4 @@
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use chrono::{Local, NaiveDate};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
@@ -95,7 +95,11 @@ impl App {
         self.days.get(self.current)
     }
     fn active(&self) -> Option<NaiveDate> {
-        self.days.last().map(|d| d.date)
+        self.active_index().map(|index| self.days[index].date)
+    }
+    fn active_index(&self) -> Option<usize> {
+        let today = Local::now().date_naive();
+        self.days.iter().rposition(|day| day.date <= today)
     }
     fn editable(&self) -> bool {
         self.day().is_some_and(|d| Some(d.date) == self.active())
@@ -114,7 +118,7 @@ impl App {
         self.suggestion = None;
         self.current = date
             .and_then(|date| self.days.iter().position(|d| d.date == date))
-            .unwrap_or_else(|| self.days.len().saturating_sub(1));
+            .unwrap_or_else(|| self.active_index().unwrap_or(0));
         let length = self.day().map_or(0, |d| d.items.len());
         self.selected = self.selected.min(length.saturating_sub(1));
         self.rebuild_search(search_selection);
@@ -160,7 +164,7 @@ impl App {
     fn start_today(&mut self) -> Result<()> {
         let created = self.store.new_day(Local::now().date_naive())?;
         self.reload()?;
-        self.current = self.days.len().saturating_sub(1);
+        self.current = self.active_index().unwrap_or(0);
         self.selected = 0;
         self.message = if created {
             "Started today; unfinished items carried into To do."
@@ -221,7 +225,7 @@ impl App {
     fn apply(&mut self, change: Change) -> Result<()> {
         ensure!(
             self.editable(),
-            "Historical days are read-only in the app; edit their Markdown files directly"
+            "Only the active day is editable in the TUI; edit other dates in their Markdown files directly"
         );
         let expected = self.day().cloned();
         self.store.change(change, expected.as_ref())?;
@@ -241,13 +245,16 @@ impl App {
 
     fn repeat_item(&mut self, day_index: usize, number: usize) -> Result<()> {
         let source = self.days[day_index].clone();
-        let active = self.days.last().unwrap().clone();
+        let active_index = self
+            .active_index()
+            .context("No day has been started. Run `krk new-day` first")?;
+        let active = self.days[active_index].clone();
         let from = (source.date != active.date).then_some(source.date);
         self.store
             .repeat(from, number, Status::Todo, Some(&source), Some(&active))?;
         self.search = None;
         self.reload()?;
-        self.current = self.days.len() - 1;
+        self.current = self.active_index().unwrap();
         self.selected = self
             .day()
             .unwrap()
@@ -460,6 +467,8 @@ impl App {
                     day.date,
                     if self.editable() {
                         "active"
+                    } else if day.date > today {
+                        "future (read-only)"
                     } else {
                         "history (read-only)"
                     },
@@ -741,6 +750,69 @@ mod tests {
             press(app, KeyCode::Char(c));
         }
         press(app, KeyCode::Enter);
+    }
+
+    #[test]
+    fn future_records_do_not_redirect_tui_edits_copies_or_start_today() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let today = Local::now().date_naive();
+        let future = today + chrono::Duration::days(1);
+        store.add_on_date(today, "current", Status::Todo).unwrap();
+        store
+            .add_on_date(future, "future plan", Status::Todo)
+            .unwrap();
+        let mut app = app(store.clone());
+        assert_eq!(app.day().unwrap().date, today);
+        assert!(app.editable());
+        press(&mut app, KeyCode::Char('d'));
+        assert_eq!(
+            store.active().unwrap().unwrap().items[0].status,
+            Status::Done
+        );
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.day().unwrap().date, future);
+        assert!(!app.editable());
+        assert!(app.apply(Change::Remove(1)).is_err());
+        press(&mut app, KeyCode::Char('c'));
+        assert_eq!(app.day().unwrap().date, today);
+        assert!(app.editable());
+        assert_eq!(store.active().unwrap().unwrap().items.len(), 2);
+        assert_eq!(
+            store.days(Some((future, future))).unwrap()[0].items.len(),
+            1
+        );
+        press(&mut app, KeyCode::Right);
+        press(&mut app, KeyCode::Char('n'));
+        assert_eq!(app.day().unwrap().date, today);
+        assert_eq!(store.active().unwrap().unwrap().items.len(), 2);
+    }
+
+    #[test]
+    fn future_only_tui_has_no_editable_day_until_today_is_started() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let today = Local::now().date_naive();
+        store
+            .add_on_date(
+                today + chrono::Duration::days(1),
+                "future plan",
+                Status::Todo,
+            )
+            .unwrap();
+        let mut app = app(store.clone());
+        assert!(app.active().is_none());
+        assert!(!app.editable());
+        assert!(
+            app.repeat_item(0, 1)
+                .unwrap_err()
+                .to_string()
+                .contains("new-day")
+        );
+        press(&mut app, KeyCode::Char('n'));
+        assert_eq!(app.day().unwrap().date, today);
+        assert!(app.editable());
+        assert!(store.active().unwrap().unwrap().items.is_empty());
     }
 
     #[test]

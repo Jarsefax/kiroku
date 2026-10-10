@@ -40,6 +40,13 @@ meeting" or "monthly op meeting - september".
 - Until a new day is manually started, additions and status changes apply
   to the last started day, including after midnight or a gap of several days.
   This is the initial behavior and can be revisited after use.
+- CLI additions and copies can override the destination with `--date
+  YYYY-MM-DD`. Create a missing destination with empty sections, without
+  carryover, and insert dates chronologically. Older destinations leave the
+  default active day unchanged; the active day is the latest recorded date
+  on or before today. Future records are excluded until their dates arrive.
+  Numbered moves, edits, removals, and TUI changes still target the active
+  day. `new-day` always starts today.
 - The first day starts empty.
 - Starting a subsequent day copies the previous recorded day's To do and
   Doing items into the new day's To do section.
@@ -71,8 +78,9 @@ These defaults were adopted for the first implementation.
 - Generate item numbers from the active day's list rather than storing IDs
   alongside titles. Use unique numbers across all three sections of that day.
   Numbers may change after edits or moves; show the updated list after changes.
-- Use numbers for the active (last manually started) day's items and letters
-  for historical items, labeling the active day explicitly. Before starting
+- Use numbers for the active day's items and letters for other dates,
+  labeling the active day explicitly. Active means the latest recorded date
+  on or before today. Before starting
   today, the previous recorded day remains active and retains its numbers.
   After starting an empty today, the preceding day is historical and receives
   letters. Editing commands accept only active-day numbers. Repeating may
@@ -95,17 +103,26 @@ These defaults were adopted for the first implementation.
   day, without creating intervening files.
 - If today's record already exists, the new-day command leaves it intact
   and reports that the day has already been started.
-- Starting a supplied date is not supported initially; `new-day` starts today
-  only. If the last recorded date is later than today, report an error.
+- `new-day` starts today only. It can insert today before existing future
+  records and carries unfinished work only from an earlier eligible day.
+  If today's record already exists, leave it unchanged.
+- `--date YYYY-MM-DD` targets title additions through `todo`, `doing`, and
+  `done`, and copies through `repeat` or `list`/`search --repeat`. Reject
+  numeric status moves with `--date`, and require `--repeat` for that option
+  on search/list. Copy source selection remains independent of destination.
+  Validate the source before creating a destination and hold the directory
+  lock through the entire update. Print targeted results without implying
+  that historical items have editable active-day numbers.
 - All status commands may move an active-day item from any status. Editing
   replaces its title; removal deletes the item. CLI removal is immediate;
   TUI removal has a y/n confirmation.
 - `krk repeat NUMBER` copies an active-day item into To do without changing
-  its original entry. `krk repeat --from YYYY-MM-DD LETTER` copies from an
-  earlier recorded date, with letters scoped to a single-date listing.
+  its original entry. `krk repeat --from YYYY-MM-DD LETTER` copies from a
+  different recorded date, with letters scoped to a single-date listing.
   `--status todo|doing|done` chooses the new status, defaulting to To do.
-  Copying keeps the exact title, permits duplicates, targets the last
-  explicitly started day, and never starts a day automatically.
+  Copying keeps the exact title and permits duplicates. Without `--date`,
+  copies target the active day and never create a day. An explicit `--date`
+  can create a destination without carryover.
 - `krk search TEXT [PERIOD]` and `krk list [PERIOD] --search TEXT` search
   title substrings ignoring case. Both support `--status todo|doing|done`;
   `list --status` also works without text. With no period, filters search
@@ -152,6 +169,8 @@ These defaults were adopted for the first implementation.
   contents in `backups/YYYY-MM.md.NUMBER.bak`. Retain five versions per month,
   pruning only after the new log and its directory are successfully flushed.
   Abort the update if backup creation fails. Failed saves may retain extras.
+- Explicit date-targeted updates retain other months' backups. Planning a
+  future month must not prune backups of the current active month.
 - Distinguish failures before replacement from failures after the update is
   visible. After a failed final directory flush, explain the uncertain
   durability and instruct the user to inspect before retrying. A cleanup

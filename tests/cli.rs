@@ -25,6 +25,230 @@ fn success(directory: &std::path::Path, args: &[&str]) -> String {
 }
 
 #[test]
+fn date_option_adds_all_statuses_and_keeps_older_dates_out_of_the_active_day() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    let store = Store::new(logs.to_path_buf());
+    let first = success(logs, &["todo", "weekly meeting", "--date", "2026-10-06"]);
+    assert!(first.contains("Updated 2026-10-06."));
+    assert!(first.contains("- weekly meeting"));
+    success(logs, &["doing", "--date", "2026-10-06", "möte 日本語"]);
+    success(logs, &["done", "backfill", "--date", "2026-09-30"]);
+    let older = success(logs, &["todo", "earlier", "--date", "2026-10-02"]);
+    assert!(!older.contains("active —"));
+    assert!(!older.contains("Updated active day"));
+    success(logs, &["todo", "default destination"]);
+    let active = store.active().unwrap().unwrap();
+    assert_eq!(active.date, parse_date("2026-10-06").unwrap());
+    assert_eq!(active.items.len(), 3);
+    assert_eq!(active.items[2].status, Status::Doing);
+    let older = store
+        .days(Some((
+            parse_date("2026-09-30").unwrap(),
+            parse_date("2026-09-30").unwrap(),
+        )))
+        .unwrap();
+    assert_eq!(older[0].items[0].status, Status::Done);
+    let future = (Local::now().date_naive() + chrono::Duration::days(40))
+        .format("%Y-%m-%d")
+        .to_string();
+    success(logs, &["done", "future record", "--date", &future]);
+    assert_eq!(
+        store.active().unwrap().unwrap().date,
+        parse_date("2026-10-06").unwrap()
+    );
+    assert!(success(logs, &["todo", "--help"]).contains("--date"));
+}
+
+#[test]
+fn date_option_copies_active_items_historical_items_and_numbered_results() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    let store = Store::new(logs.to_path_buf());
+    success(logs, &["done", "source meeting", "--date", "2026-10-06"]);
+    let source_path = logs.join("2026-10.md");
+    let original = fs::read(&source_path).unwrap();
+    success(
+        logs,
+        &["repeat", "1", "--date", "2026-09-30", "--status", "doing"],
+    );
+    success(
+        logs,
+        &[
+            "repeat",
+            "--from",
+            "2026-10-06",
+            "A",
+            "--date",
+            "2026-09-29",
+        ],
+    );
+    // The explicit destination may precede or equal the source date.
+    success(
+        logs,
+        &[
+            "search",
+            "source",
+            "2026-10-06",
+            "--repeat",
+            "1",
+            "--date",
+            "2026-09-28",
+        ],
+    );
+    success(
+        logs,
+        &[
+            "list",
+            "2026-10-06",
+            "--status",
+            "done",
+            "--repeat",
+            "1",
+            "--date",
+            "2026-09-27",
+        ],
+    );
+    success(
+        logs,
+        &[
+            "list",
+            "2026-10-06",
+            "--repeat",
+            "1",
+            "--date",
+            "2026-09-26",
+        ],
+    );
+    assert_eq!(fs::read(&source_path).unwrap(), original);
+    let days = store.days(None).unwrap();
+    assert_eq!(days.len(), 6);
+    assert!(
+        days.iter()
+            .all(|day| day.items.len() == 1 && day.items[0].title == "source meeting")
+    );
+    assert_eq!(days[4].items[0].status, Status::Doing);
+    assert_eq!(days[0].items[0].status, Status::Todo);
+    let output = success(
+        logs,
+        &[
+            "search",
+            "source",
+            "2026-10-06",
+            "--repeat",
+            "1",
+            "--date",
+            "2026-10-06",
+        ],
+    );
+    assert!(output.contains("Updated 2026-10-06."));
+    assert_eq!(store.active().unwrap().unwrap().items.len(), 2);
+}
+
+#[test]
+fn future_dates_do_not_capture_default_additions_moves_copies_or_new_day() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    let store = Store::new(logs.to_path_buf());
+    let today = Local::now().date_naive();
+    let yesterday = today - chrono::Duration::days(1);
+    let future = today + chrono::Duration::days(1);
+    let past_text = yesterday.format("%Y-%m-%d").to_string();
+    let future_text = future.format("%Y-%m-%d").to_string();
+    success(logs, &["todo", "earlier", "--date", &past_text]);
+    success(logs, &["todo", "future plan", "--date", &future_text]);
+    success(logs, &["todo", "default addition"]);
+    success(logs, &["doing", "1"]);
+    assert_eq!(store.active().unwrap().unwrap().date, yesterday);
+    let listed = success(logs, &["list", &future_text]);
+    assert!(listed.contains("future — letters"));
+    assert!(!listed.contains("numbers are editable"));
+    success(logs, &["search", "future plan", "--repeat", "1"]);
+    let active = store.active().unwrap().unwrap();
+    assert_eq!(active.date, yesterday);
+    assert_eq!(active.items.len(), 3);
+    assert!(
+        active
+            .items
+            .iter()
+            .any(|item| item.title == "earlier" && item.status == Status::Doing)
+    );
+    success(logs, &["new-day"]);
+    success(logs, &["todo", "today addition"]);
+    assert_eq!(store.active().unwrap().unwrap().date, today);
+    assert_eq!(store.active().unwrap().unwrap().items.len(), 4);
+    let future_day = store.days(Some((future, future))).unwrap().remove(0);
+    assert_eq!(future_day.items.len(), 1);
+    assert_eq!(future_day.items[0].title, "future plan");
+    assert_eq!(future_day.items[0].status, Status::Todo);
+}
+
+#[test]
+fn future_only_cli_requires_starting_today_for_commands_without_a_date() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    let today = Local::now().date_naive();
+    let future = today + chrono::Duration::days(40);
+    let future_text = future.format("%Y-%m-%d").to_string();
+    success(logs, &["todo", "future plan", "--date", &future_text]);
+    let path = logs.join(format!("{}.md", future.format("%Y-%m")));
+    let original = fs::read(&path).unwrap();
+    for args in [
+        &["todo", "default"][..],
+        &["repeat", "1"],
+        &["search", "future plan", "--repeat", "1"],
+    ] {
+        let result = run(logs, args);
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("new-day"));
+        assert_eq!(fs::read(&path).unwrap(), original);
+    }
+    success(logs, &["new-day"]);
+    let store = Store::new(logs.to_path_buf());
+    assert_eq!(store.active().unwrap().unwrap().date, today);
+    assert!(store.active().unwrap().unwrap().items.is_empty());
+    success(logs, &["todo", "default"]);
+    assert_eq!(store.active().unwrap().unwrap().items[0].title, "default");
+    assert_eq!(fs::read(path).unwrap(), original);
+}
+
+#[test]
+fn invalid_date_options_and_numbered_moves_leave_files_unchanged() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    success(logs, &["todo", "source", "--date", "2026-10-06"]);
+    let path = logs.join("2026-10.md");
+    let original = fs::read(&path).unwrap();
+    for args in [
+        &["todo", "new", "--date", "2026-02-30"][..],
+        &["doing", "new", "--date", "2026-1-2"],
+        &["done", "new", "--date", "today"],
+        &["todo", "1", "--date", "2026-09-30"],
+        &["doing", "1", "--date", "2026-09-30"],
+        &["done", "1", "--date", "2026-09-30"],
+        &["edit", "1", "new", "--date", "2026-09-30"],
+        &["remove", "1", "--date", "2026-09-30"],
+        &["new-day", "--date", "2026-09-30"],
+        &["list", "--date", "2026-09-30"],
+        &["search", "source", "--date", "2026-09-30"],
+        &["repeat", "2", "--date", "2026-09-30"],
+        &["search", "source", "--repeat", "99", "--date", "2026-09-30"],
+        &["todo", "", "--date", "2026-09-30"],
+    ] {
+        let result = run(logs, args);
+        assert!(!result.status.success(), "{args:?}");
+        assert_eq!(fs::read(&path).unwrap(), original, "{args:?}");
+        assert!(!logs.join("2026-09.md").exists());
+        assert!(!logs.join("backups").exists());
+    }
+    let error = run(logs, &["todo", "1", "--date", "2026-09-30"]);
+    assert!(
+        String::from_utf8_lossy(&error.stderr)
+            .contains("numbered moves still apply to the active day")
+    );
+}
+
+#[test]
 fn storage_version_checks_reach_cli_errors_and_preserve_logs() {
     let temp = tempfile::tempdir().unwrap();
     let logs = temp.path();

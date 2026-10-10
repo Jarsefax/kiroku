@@ -60,7 +60,7 @@ pub fn select_filtered(
     today: NaiveDate,
     filter: &Filter,
 ) -> Result<View> {
-    let active = store.active()?.map(|day| day.date);
+    let active = store.active_on(today)?.map(|day| day.date);
     let mut days = store.days(selector.map(|text| range(text, today)).transpose()?)?;
     days.retain(|day| day.items.iter().any(|item| filter.matches(item)));
     let count = days
@@ -129,7 +129,7 @@ pub fn range(selector: &str, today: NaiveDate) -> Result<(NaiveDate, NaiveDate)>
 }
 
 pub fn select(store: &Store, selector: Option<&str>, today: NaiveDate) -> Result<View> {
-    let active_day = store.active()?;
+    let active_day = store.active_on(today)?;
     let active = active_day.as_ref().map(|d| d.date);
     if let Some(selector) = selector {
         let days = store.days(Some(range(selector, today)?))?;
@@ -162,7 +162,7 @@ pub fn select(store: &Store, selector: Option<&str>, today: NaiveDate) -> Result
         days.push(day);
     } else {
         notice = format!(
-            "No recorded days. Today ({today}) has not been started. Run `krk new-day` to start."
+            "No recorded days on or before today. Today ({today}) has not been started. Run `krk new-day` to start."
         );
     }
     Ok(View {
@@ -236,6 +236,10 @@ fn render_view(
         }
         if is_active {
             labels.push("active — numbers are editable");
+        } else if day.date > today && filter.is_some() {
+            labels.push("future — letters scoped to this date");
+        } else if day.date > today {
+            labels.push("future — letters are browsing labels");
         } else if filter.is_some() {
             labels.push("history — letters scoped to this date");
         } else {
