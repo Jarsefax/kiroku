@@ -265,7 +265,7 @@ on input and resize rather than running an idle animation loop.
 
 ## Files and configuration
 
-Default logs live in **`~/Document/kiroku/`**, with singular `Document`.
+Default logs live in **`~/Documents/kiroku/`**.
 Each month has a file such as `2026-10.md`:
 
 ```markdown
@@ -383,7 +383,7 @@ Optional settings live in **`~/.config/kiroku/config.toml`**, or
 No config file is required.
 
 ```toml
-data_dir = "~/Document/kiroku"
+data_dir = "~/Documents/kiroku"
 ```
 
 Change that setting to choose a persistent directory. For a single invocation:
@@ -401,6 +401,40 @@ do not create directories or log files.
 
 Kiroku targets Linux initially. Rust 1.88 or later is needed **only to build**;
 the resulting executable does not need Rust or an interpreter installed.
+
+From a cloned checkout, install with one command:
+
+```sh
+./install.sh
+```
+
+This builds the release executable and installs `krk` into `~/.local/bin`,
+replacing an existing installation there. Run it again after pulling updates.
+The script uses the local Rust toolchain when available, otherwise Docker,
+and finally Podman if Docker is not installed.
+The script reports if that directory needs to be added to your PATH. It does
+not need sudo or change your logs or configuration.
+
+To explicitly select Docker or Podman, use:
+
+```sh
+./install.sh --docker
+# Or, with Podman:
+./install.sh --podman
+```
+
+Container builds require a Linux x86-64 or ARM64 host. Docker needs a running
+daemon accessible to your user; Podman supports its usual rootless setup.
+The script pulls the official `docker.io/library/rust:1.88-alpine` image, builds a
+static Linux executable inside a temporary container, and installs it into
+the same `~/.local/bin` directory. The container engine and Rust are not needed to run the
+installed tool. The temporary container and build files are removed; the
+downloaded image stays available for later installs. Build inputs are copied
+into the container, so the checkout is not modified by the container.
+
+Use `./install.sh --help` for the available options.
+
+Alternatively, build and install manually:
 
 ```sh
 cargo build --release --locked

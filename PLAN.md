@@ -14,13 +14,13 @@ meeting" or "monthly op meeting - september".
   installed interpreter or language runtime.
 - Prioritize fast startup, low memory use, and responsive navigation.
 - Store data in plain text files, with no database.
-- Default data directory: `~/Document/kiroku/` (singular `Document`).
+- Default data directory: `~/Documents/kiroku/`.
   Users can choose a different directory for their log files.
 - Store optional configuration in `~/.config/kiroku/config.toml`, or
   `$XDG_CONFIG_HOME/kiroku/config.toml` when `XDG_CONFIG_HOME` is set.
   Without a configuration file, use the defaults.
 - A `data_dir` setting selects a persistent custom data directory, supporting
-  a home-relative value such as `data_dir = "~/Document/kiroku"`.
+  a home-relative value such as `data_dir = "~/Documents/kiroku"`.
 - `--data-dir PATH` overrides the configured directory for that invocation.
   Directory precedence: command-line override, saved setting, default.
 - Keep all three states together in a human-readable, manually editable

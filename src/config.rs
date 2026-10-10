@@ -56,7 +56,7 @@ pub fn resolve_with(
         match config.data_dir {
             Some(value) if value.trim().is_empty() => bail!("data_dir cannot be empty"),
             Some(value) => PathBuf::from(value),
-            None => home.join("Document/kiroku"),
+            None => home.join("Documents/kiroku"),
         }
     };
     let selected = expand_home(&selected, home)?;

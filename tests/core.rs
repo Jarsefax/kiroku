@@ -663,7 +663,7 @@ fn configuration_defaults_saved_path_override_and_home_expansion() {
     let config_dir = home.path().join("config");
     assert_eq!(
         config::resolve_with(None, home.path(), &config_dir).unwrap(),
-        home.path().join("Document/kiroku")
+        home.path().join("Documents/kiroku")
     );
     fs::create_dir_all(config_dir.join("kiroku")).unwrap();
     let config_path = config_dir.join("kiroku/config.toml");
