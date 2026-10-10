@@ -2,13 +2,14 @@
 set -eu
 
 usage() {
-    printf 'Usage: ./install.sh [--docker|--podman]\n\nInstalls krk into ~/.local/bin.\nDefault: use local Rust (1.88 or later), then Docker, then Podman.\n--docker: build in Docker instead of using local Rust.\n--podman: build in Podman instead of using local Rust.\n'
+    printf 'Usage: ./install.sh [--docker|--podman|--uninstall]\n\nInstalls krk into ~/.local/bin.\nDefault: use local Rust (1.88 or later), then Docker, then Podman.\n--docker: build in Docker instead of using local Rust.\n--podman: build in Podman instead of using local Rust.\n--uninstall: remove ~/.local/bin/krk; preserve logs and configuration.\n'
 }
 
 mode=auto
 case "${1:-}" in
     --docker) mode=docker ;;
     --podman) mode=podman ;;
+    --uninstall) mode=uninstall ;;
     --help|-h) usage; exit 0 ;;
     '') ;;
     *) usage >&2; exit 1 ;;
@@ -18,8 +19,20 @@ if [ "$#" -gt 1 ]; then
     exit 1
 fi
 
-repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 bin_dir="$HOME/.local/bin"
+
+if [ "$mode" = uninstall ]; then
+    if [ -e "$bin_dir/krk" ] || [ -L "$bin_dir/krk" ]; then
+        rm -f -- "$bin_dir/krk"
+        printf 'Removed %s/krk.\n' "$bin_dir"
+    else
+        printf 'krk is not installed at %s/krk.\n' "$bin_dir"
+    fi
+    printf 'Logs and configuration have been preserved.\n'
+    exit 0
+fi
+
+repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 if [ "$mode" = auto ]; then
     # Version checks also detect rustup shims without an installed toolchain.

@@ -434,6 +434,16 @@ into the container, so the checkout is not modified by the container.
 
 Use `./install.sh --help` for the available options.
 
+To uninstall:
+
+```sh
+./install.sh --uninstall
+```
+
+This removes only `~/.local/bin/krk`, preserving logs and configuration.
+It requires no Rust toolchain or container engine and is safe to repeat if
+the executable is already absent.
+
 Alternatively, build and install manually:
 
 ```sh
