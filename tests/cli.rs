@@ -957,19 +957,19 @@ fn previous_month_edit_commands_back_up_original_or_abort_if_backup_unavailable(
 }
 
 #[test]
-fn reorder_command_persists_order_and_prints_updated_numbers() {
+fn move_command_persists_order_and_prints_updated_numbers() {
     let temp = tempfile::tempdir().unwrap();
     let logs = temp.path();
     success(logs, &["todo", "first"]);
     success(logs, &["todo", "second"]);
     success(logs, &["doing", "working"]);
-    let output = success(logs, &["reorder", "2", "up"]);
+    let output = success(logs, &["move", "2", "up"]);
     assert!(output.find("second").unwrap() < output.find("first").unwrap());
     let before = Store::new(logs.to_path_buf()).active().unwrap().unwrap();
     assert_eq!(before.numbered()[0].title, "second");
-    success(logs, &["reorder", "2", "down"]);
-    assert!(!run(logs, &["reorder", "0", "up"]).status.success());
-    assert!(!run(logs, &["reorder", "1", "sideways"]).status.success());
+    success(logs, &["move", "2", "down"]);
+    assert!(!run(logs, &["move", "0", "up"]).status.success());
+    assert!(!run(logs, &["move", "1", "sideways"]).status.success());
     let after = Store::new(logs.to_path_buf()).active().unwrap().unwrap();
     assert_eq!(
         after
@@ -982,14 +982,14 @@ fn reorder_command_persists_order_and_prints_updated_numbers() {
 }
 
 #[test]
-fn reorder_steps_option_accepts_positive_counts_and_clamps_to_section() {
+fn move_steps_option_accepts_positive_counts_and_clamps_to_section() {
     let temp = tempfile::tempdir().unwrap();
     let logs = temp.path();
     for title in ["first", "second", "third", "fourth"] {
         success(logs, &["todo", title]);
     }
     success(logs, &["doing", "working"]);
-    success(logs, &["reorder", "1", "down", "--steps", "2"]);
+    success(logs, &["move", "1", "down", "--steps", "2"]);
     let store = Store::new(logs.to_path_buf());
     let titles = || {
         store
@@ -1002,11 +1002,11 @@ fn reorder_steps_option_accepts_positive_counts_and_clamps_to_section() {
             .collect::<Vec<_>>()
     };
     assert_eq!(titles(), ["second", "third", "first", "fourth", "working"]);
-    success(logs, &["reorder", "3", "up", "--steps", "100"]);
+    success(logs, &["move", "3", "up", "--steps", "100"]);
     assert_eq!(titles(), ["first", "second", "third", "fourth", "working"]);
     for value in ["0", "-1", "invalid"] {
         assert!(
-            !run(logs, &["reorder", "1", "down", "--steps", value])
+            !run(logs, &["move", "1", "down", "--steps", value])
                 .status
                 .success()
         );
@@ -1182,7 +1182,7 @@ fn invalid_positions_leave_existing_logs_and_missing_days_unchanged() {
 }
 
 #[test]
-fn short_options_match_long_options_through_add_filter_copy_and_reorder() {
+fn short_options_match_long_options_through_add_filter_copy_and_move() {
     let short_logs = tempfile::tempdir().unwrap();
     let long_logs = tempfile::tempdir().unwrap();
     let workflows: &[(&[&str], &[&str])] = &[
@@ -1279,8 +1279,8 @@ fn short_options_match_long_options_through_add_filter_copy_and_reorder() {
             ],
         ),
         (
-            &["reorder", "1", "down", "-n", "2"],
-            &["reorder", "1", "down", "--steps", "2"],
+            &["move", "1", "down", "-n", "2"],
+            &["move", "1", "down", "--steps", "2"],
         ),
         (&["list", "-c", "always"], &["list", "--color", "always"]),
         (&["-c", "never", "list"], &["--color", "never", "list"]),
@@ -1300,7 +1300,7 @@ fn short_options_match_long_options_through_add_filter_copy_and_reorder() {
         &["list", "-p", "1"][..],
         &["search", "meeting", "-d", "2025-01-03"],
         &["todo", "invalid", "-p", "0"],
-        &["reorder", "1", "up", "-n", "0"],
+        &["move", "1", "up", "-n", "0"],
     ] {
         assert!(!run(short_logs.path(), args).status.success(), "{args:?}");
         assert_eq!(

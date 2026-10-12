@@ -45,7 +45,7 @@ day. Use `krk new-day` to start subsequent days and carry unfinished work forwar
 | `krk todo NUMBER` | Move an active-day item back into To do |
 | `krk repeat NUMBER` | Copy an active-day item into To do, keeping the original |
 | `krk repeat --from YYYY-MM-DD LETTER` | Copy a historical item into the active day's To do |
-| `krk reorder NUMBER up\|down [--steps N]` | Move an active-day item within its section (default: one place) |
+| `krk move NUMBER up\|down [--steps N]` | Move an active-day item within its section (default: one place) |
 | `krk edit NUMBER "title"` | Rename an active-day item |
 | `krk remove NUMBER` | Remove an active-day item immediately |
 | `krk path` | Print the resolved log directory |
@@ -81,7 +81,7 @@ Short options are case-sensitive. For example:
 krk todo "urgent task" -p 1
 krk list -S "meeting" -s done
 krk repeat -f 2026-10-02 B -d 2026-10-05 -p 1
-krk reorder 3 up -n 2
+krk move 3 up -n 2
 krk -D ~/other-folder -c never list
 ```
 
@@ -323,7 +323,7 @@ Reordering works in To do, Doing, and Done on the active day. It saves the
 order in the Markdown file and keeps the moved item selected. At the first
 or last item in a section, moving farther does nothing; it never changes
 an item’s status. Item numbers update to reflect the new order.
-Use `krk reorder 3 up --steps 2` to move item 3 past two items in one save.
+Use `krk move 3 up --steps 2` to move item 3 past two items in one save.
 `--steps` must be a positive integer; moves larger than the available space
 stop at the first or last item in that section.
 

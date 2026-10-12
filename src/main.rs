@@ -185,7 +185,7 @@ enum Command {
     /// Rename an active-day item
     Edit { number: usize, title: String },
     /// Move an active-day item up or down within its section
-    Reorder {
+    Move {
         number: usize,
         #[arg(value_enum)]
         direction: CliDirection,
@@ -466,7 +466,7 @@ fn run(args: Args, style: Style) -> Result<()> {
             );
         }
         Some(Command::Edit { number, title }) => (Change::Edit(number, title), None),
-        Some(Command::Reorder {
+        Some(Command::Move {
             number,
             direction,
             steps,
