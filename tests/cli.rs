@@ -955,3 +955,61 @@ fn previous_month_edit_commands_back_up_original_or_abort_if_backup_unavailable(
         }
     }
 }
+
+#[test]
+fn reorder_command_persists_order_and_prints_updated_numbers() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    success(logs, &["todo", "first"]);
+    success(logs, &["todo", "second"]);
+    success(logs, &["doing", "working"]);
+    let output = success(logs, &["reorder", "2", "up"]);
+    assert!(output.find("second").unwrap() < output.find("first").unwrap());
+    let before = Store::new(logs.to_path_buf()).active().unwrap().unwrap();
+    assert_eq!(before.numbered()[0].title, "second");
+    success(logs, &["reorder", "2", "down"]);
+    assert!(!run(logs, &["reorder", "0", "up"]).status.success());
+    assert!(!run(logs, &["reorder", "1", "sideways"]).status.success());
+    let after = Store::new(logs.to_path_buf()).active().unwrap().unwrap();
+    assert_eq!(
+        after
+            .numbered()
+            .iter()
+            .map(|i| i.title.as_str())
+            .collect::<Vec<_>>(),
+        ["second", "first", "working"]
+    );
+}
+
+#[test]
+fn reorder_steps_option_accepts_positive_counts_and_clamps_to_section() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    for title in ["first", "second", "third", "fourth"] {
+        success(logs, &["todo", title]);
+    }
+    success(logs, &["doing", "working"]);
+    success(logs, &["reorder", "1", "down", "--steps", "2"]);
+    let store = Store::new(logs.to_path_buf());
+    let titles = || {
+        store
+            .active()
+            .unwrap()
+            .unwrap()
+            .numbered()
+            .iter()
+            .map(|item| item.title.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(titles(), ["second", "third", "first", "fourth", "working"]);
+    success(logs, &["reorder", "3", "up", "--steps", "100"]);
+    assert_eq!(titles(), ["first", "second", "third", "fourth", "working"]);
+    for value in ["0", "-1", "invalid"] {
+        assert!(
+            !run(logs, &["reorder", "1", "down", "--steps", value])
+                .status
+                .success()
+        );
+        assert_eq!(titles(), ["first", "second", "third", "fourth", "working"]);
+    }
+}

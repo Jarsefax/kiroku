@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use kiroku::{
     config,
     listing::{self, View},
-    storage::{Change, Day, Status, Store, parse_date},
+    storage::{Change, Day, Direction, Status, Store, parse_date},
     style::Style,
 };
 use std::{
@@ -163,10 +163,25 @@ enum Command {
     },
     /// Rename an active-day item
     Edit { number: usize, title: String },
+    /// Move an active-day item up or down within its section
+    Reorder {
+        number: usize,
+        #[arg(value_enum)]
+        direction: CliDirection,
+        /// Number of places to move (stops at the section boundary)
+        #[arg(long, default_value = "1", value_name = "N")]
+        steps: std::num::NonZeroUsize,
+    },
     /// Remove an active-day item
     Remove { number: usize },
     /// Print the resolved log directory
     Path,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum CliDirection {
+    Up,
+    Down,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -393,6 +408,21 @@ fn run(args: Args, style: Style) -> Result<()> {
             );
         }
         Some(Command::Edit { number, title }) => (Change::Edit(number, title), None),
+        Some(Command::Reorder {
+            number,
+            direction,
+            steps,
+        }) => (
+            Change::Reorder(
+                number,
+                match direction {
+                    CliDirection::Up => Direction::Up,
+                    CliDirection::Down => Direction::Down,
+                },
+                steps.get(),
+            ),
+            None,
+        ),
         Some(Command::Remove { number }) => (Change::Remove(number), None),
     };
     if let Some(date) = date {

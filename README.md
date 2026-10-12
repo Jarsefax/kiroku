@@ -45,6 +45,7 @@ day. Use `krk new-day` to start subsequent days and carry unfinished work forwar
 | `krk todo NUMBER` | Move an active-day item back into To do |
 | `krk repeat NUMBER` | Copy an active-day item into To do, keeping the original |
 | `krk repeat --from YYYY-MM-DD LETTER` | Copy a historical item into the active day's To do |
+| `krk reorder NUMBER up\|down [--steps N]` | Move an active-day item within its section (default: one place) |
 | `krk edit NUMBER "title"` | Rename an active-day item |
 | `krk remove NUMBER` | Remove an active-day item immediately |
 | `krk path` | Print the resolved log directory |
@@ -248,6 +249,7 @@ the displayed references reflect the active day you intend to copy into.
 | Key | Action |
 | --- | --- |
 | ↑/↓ or `j`/`k` | Select an item |
+| `K`/`J` (Shift-k/j) | Move the selected item up/down within its section |
 | ←/→ or `h`/`l` | Browse earlier/later recorded days |
 | Home/End or `g`/`G` | Select the first/last item |
 | `a` | Add a todo |
@@ -260,6 +262,14 @@ the displayed references reflect the active day you intend to copy into.
 | `r` | Reload manually edited files |
 | `?` | Show help |
 | `q` or Ctrl-C | Quit |
+
+Reordering works in To do, Doing, and Done on the active day. It saves the
+order in the Markdown file and keeps the moved item selected. At the first
+or last item in a section, moving farther does nothing; it never changes
+an item’s status. Item numbers update to reflect the new order.
+Use `krk reorder 3 up --steps 2` to move item 3 past two items in one save.
+`--steps` must be a positive integer; moves larger than the available space
+stop at the first or last item in that section.
 
 Copying with `c` preserves the source, jumps to the active day, and selects
 the new entry. Press `s` to start working on it immediately.

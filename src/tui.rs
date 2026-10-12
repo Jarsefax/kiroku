@@ -7,7 +7,7 @@ use crossterm::{
 };
 use kiroku::{
     listing,
-    storage::{Change, Day, Status, Store},
+    storage::{Change, Day, Direction, Status, Store},
 };
 use ratatui::{
     Terminal,
@@ -249,6 +249,23 @@ impl App {
             .collect()
     }
 
+    fn reorder(&mut self, direction: Direction) -> Result<()> {
+        let items = self.day().unwrap().numbered();
+        let target = direction.neighbor(self.selected).filter(|&index| {
+            items
+                .get(index)
+                .is_some_and(|item| item.status == items[self.selected].status)
+        });
+        self.apply(Change::Reorder(self.selected + 1, direction, 1))?;
+        if let Some(target) = target {
+            self.selected = target;
+            self.message = "Saved item order.".into();
+        } else {
+            self.message = "Already at the edge of this section.".into();
+        }
+        Ok(())
+    }
+
     fn repeat_item(&mut self, day_index: usize, number: usize) -> Result<()> {
         let source = self.days[day_index].clone();
         let active_index = self
@@ -390,6 +407,8 @@ impl App {
             KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
             KeyCode::Char('?') => self.help = true,
             KeyCode::Char('/') => self.search_prompt(),
+            KeyCode::Char('J') if length > 0 => self.reorder(Direction::Down)?,
+            KeyCode::Char('K') if length > 0 => self.reorder(Direction::Up)?,
             KeyCode::Down | KeyCode::Char('j') => {
                 self.selected = (self.selected + 1).min(length.saturating_sub(1))
             }
@@ -576,15 +595,15 @@ impl App {
         let shortcuts = if self.search.is_some() {
             "↑↓/jk matches  c copy  Enter view  / search  f status\nn new day  r reload  Esc back  ? help  q quit"
         } else {
-            "↑↓/jk items  ←→/hl days  a add  c copy  / search  s doing  d done  t todo\ne edit  x remove  n new day  r reload  ? help  q quit"
+            "↑↓/jk items  K/J reorder  ←→/hl days  a add  c copy  / search\ns doing  d done  t todo  e edit  x remove  n new day  r reload  ? help  q quit"
         };
         frame.render_widget(
             Paragraph::new(shortcuts).wrap(Wrap { trim: false }),
             layout[3],
         );
         if self.help {
-            let text = "↑↓ or j/k: navigate items\n←→ or h/l: browse recorded days\ng/G or Home/End: first/last item\na: add a title to the active day's To do\nc: copy selected item from any day to active To do\n/: search titles across all recorded days\nSearch: f cycles all/Done/To do/Doing; Enter views source\nSearch: c copies; Esc returns to browsing\ns: Doing   d: Done   t: To do\ne: rename   x: remove (confirm with y)\nn: explicitly start today\nr: reload after editing the Markdown files\n\nHistorical days are read-only in Kiroku.\nPrompt: type, Backspace, Ctrl-U to clear, Enter to save.\nAdd prompt: ↑↓/Tab selects a previous title.\nEsc cancels a prompt. Ctrl-C quits.\n\n? or Esc closes help; q quits.";
-            popup(frame, area, " Keyboard help ", text, 23);
+            let text = "↑↓ or j/k: navigate items\nK/J (Shift-k/j): reorder up/down within a section\n←→ or h/l: browse recorded days\ng/G or Home/End: first/last item\na: add a title to the active day's To do\nc: copy selected item from any day to active To do\n/: search titles across all recorded days\nSearch: f cycles all/Done/To do/Doing; Enter views source\nSearch: c copies; Esc returns to browsing\ns: Doing   d: Done   t: To do\ne: rename   x: remove (confirm with y)\nn: explicitly start today\nr: reload after editing the Markdown files\n\nHistorical days are read-only in Kiroku.\nPrompt: type, Backspace, Ctrl-U to clear, Enter to save.\nAdd prompt: ↑↓/Tab selects a previous title.\nEsc cancels a prompt. Ctrl-C quits.\n\n? or Esc closes help; q quits.";
+            popup(frame, area, " Keyboard help ", text, 24);
         }
         if let Some(prompt) = &self.prompt {
             let (title, text) = match prompt {
@@ -746,6 +765,59 @@ mod tests {
 
     fn press(app: &mut App, code: KeyCode) {
         assert!(!app.key(KeyEvent::new(code, KeyModifiers::NONE)).unwrap());
+    }
+
+    #[test]
+    fn reorder_keys_follow_selection_and_keep_history_read_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let today = Local::now().date_naive();
+        store.new_day(today - chrono::Duration::days(1)).unwrap();
+        store
+            .change(Change::Add("historical".into(), Status::Done), None)
+            .unwrap();
+        store.new_day(today).unwrap();
+        for status in Status::ALL {
+            for title in ["first", "second", "third"] {
+                store
+                    .change(Change::Add(title.into(), status), None)
+                    .unwrap();
+            }
+        }
+        let mut app = app(store.clone());
+        for start in [0, 3, 6] {
+            app.selected = start;
+            press(&mut app, KeyCode::Char('K'));
+            assert_eq!(app.selected, start);
+            press(&mut app, KeyCode::Char('J'));
+            press(&mut app, KeyCode::Char('J'));
+            assert_eq!(app.selected, start + 2);
+            assert_eq!(app.day().unwrap().numbered()[app.selected].title, "first");
+            press(&mut app, KeyCode::Char('J'));
+            assert_eq!(app.selected, start + 2);
+            press(&mut app, KeyCode::Char('K'));
+            assert_eq!(app.selected, start + 1);
+            assert_eq!(app.day().unwrap().numbered()[app.selected].title, "first");
+        }
+        let active = store.active().unwrap().unwrap();
+        store
+            .change(Change::Edit(1, "external edit".into()), None)
+            .unwrap();
+        assert!(
+            app.key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT))
+                .is_err()
+        );
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Left);
+        assert!(
+            app.key(KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT))
+                .is_err()
+        );
+        assert_eq!(
+            store.previous(today).unwrap().unwrap().numbered()[0].title,
+            "historical"
+        );
+        assert_eq!(active.numbered()[0].title, "second");
     }
 
     fn search(app: &mut App, query: &str) {

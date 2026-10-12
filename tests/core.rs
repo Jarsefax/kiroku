@@ -1,7 +1,7 @@
 use chrono::{Datelike, Duration, NaiveDate};
 use kiroku::{
     config, listing,
-    storage::{Change, Status, Store, parse_date},
+    storage::{Change, Direction, Status, Store, parse_date},
 };
 use std::fs;
 
@@ -735,4 +735,163 @@ fn letter_labels_extend_past_z_and_stay_unique_across_days() {
     assert!(rendered.contains("A. done"));
     assert!(rendered.contains("B. done"));
     assert!(rendered.contains("1. done"));
+}
+
+#[test]
+fn reorder_preserves_sections_comments_line_endings_and_rejects_stale_views() {
+    for newline in ["\n", "\r\n"] {
+        let (_temp, store) = fixture();
+        fs::create_dir_all(&store.dir).unwrap();
+        let path = store.dir.join("2026-10.md");
+        let original = "<!-- kiroku-format: 1 -->\n# 2026-10-01\n## To do\n- duplicate\n<!-- keep here -->\n\n- duplicate\n- last todo  \n## Doing\n- first doing\n- last doing\n## Done\n- first done\n- last done".replace('\n', newline);
+        fs::write(&path, &original).unwrap();
+        let initial = store.active().unwrap().unwrap();
+        for (number, direction) in [
+            (1, Direction::Up),
+            (3, Direction::Down),
+            (4, Direction::Up),
+            (5, Direction::Down),
+            (6, Direction::Up),
+            (7, Direction::Down),
+        ] {
+            store
+                .change(Change::Reorder(number, direction, 1), Some(&initial))
+                .unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+            assert!(!store.dir.join("backups").exists());
+        }
+        // Duplicate titles are distinct occurrences, selected by number.
+        store
+            .change(Change::Reorder(2, Direction::Down, 1), Some(&initial))
+            .unwrap();
+        let expected = original.replacen(
+            &format!("- duplicate{newline}- last todo  "),
+            &format!("- last todo  {newline}- duplicate"),
+            1,
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+        assert!(
+            store
+                .change(Change::Reorder(1, Direction::Down, 1), Some(&initial))
+                .is_err()
+        );
+        store
+            .change(Change::Reorder(4, Direction::Down, 1), None)
+            .unwrap();
+        store
+            .change(Change::Reorder(7, Direction::Up, 1), None)
+            .unwrap();
+        assert_eq!(
+            titles(&store)
+                .iter()
+                .map(|(title, _)| title.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "duplicate",
+                "last todo",
+                "duplicate",
+                "last doing",
+                "first doing",
+                "last done",
+                "first done"
+            ]
+        );
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(saved.contains(&format!("<!-- keep here -->{newline}{newline}")));
+        assert!(saved.ends_with("- first done"));
+        for number in [0, 8, usize::MAX] {
+            assert!(
+                store
+                    .change(Change::Reorder(number, Direction::Down, 1), None)
+                    .is_err()
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), saved);
+        }
+    }
+}
+
+#[test]
+fn reorder_multiple_steps_is_one_save_and_preserves_intervening_order() {
+    for status in Status::ALL {
+        let (_temp, store) = fixture();
+        store.new_day(chrono::Local::now().date_naive()).unwrap();
+        for section in Status::ALL {
+            for title in ["first", "second", "third", "fourth"] {
+                store
+                    .change(Change::Add(title.into(), section), None)
+                    .unwrap();
+            }
+        }
+        let day = store.active().unwrap().unwrap();
+        let start = day
+            .numbered()
+            .iter()
+            .position(|item| item.status == status)
+            .unwrap();
+        let path = store.dir.join(format!("{}.md", day.date.format("%Y-%m")));
+        let original = fs::read(&path).unwrap();
+        let backups = store.dir.join("backups");
+        let latest_before = fs::read_dir(&backups)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .max()
+            .unwrap();
+        let changed = store
+            .change(Change::Reorder(start + 1, Direction::Down, 2), Some(&day))
+            .unwrap();
+        assert_eq!(
+            changed
+                .numbered()
+                .iter()
+                .filter(|item| item.status == status)
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            ["second", "third", "first", "fourth"]
+        );
+        let latest_after = fs::read_dir(&backups)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .max()
+            .unwrap();
+        let sequence = |name: &std::ffi::OsStr| {
+            name.to_str()
+                .unwrap()
+                .split('.')
+                .nth(2)
+                .unwrap()
+                .parse::<usize>()
+                .unwrap()
+        };
+        assert_eq!(sequence(&latest_after), sequence(&latest_before) + 1);
+        assert_eq!(fs::read(backups.join(latest_after)).unwrap(), original);
+        let changed = store
+            .change(Change::Reorder(start + 3, Direction::Up, usize::MAX), None)
+            .unwrap();
+        assert_eq!(changed.numbered()[start].title, "first");
+        let changed = store
+            .change(
+                Change::Reorder(start + 1, Direction::Down, usize::MAX),
+                None,
+            )
+            .unwrap();
+        assert_eq!(changed.numbered()[start + 3].title, "first");
+        let saved = fs::read(&path).unwrap();
+        assert!(
+            store
+                .change(Change::Reorder(start + 1, Direction::Down, 0), None)
+                .is_err()
+        );
+        assert_eq!(fs::read(&path).unwrap(), saved);
+        for section in Status::ALL.into_iter().filter(|section| *section != status) {
+            assert_eq!(
+                changed
+                    .numbered()
+                    .iter()
+                    .filter(|item| item.status == section)
+                    .map(|item| item.title.as_str())
+                    .collect::<Vec<_>>(),
+                ["first", "second", "third", "fourth"]
+            );
+        }
+    }
 }

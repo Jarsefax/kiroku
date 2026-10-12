@@ -355,8 +355,24 @@ impl Document {
 pub enum Change {
     Add(String, Status),
     Move(usize, Status),
+    Reorder(usize, Direction, usize),
     Edit(usize, String),
     Remove(usize),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Direction {
+    Up,
+    Down,
+}
+
+impl Direction {
+    pub fn neighbor(self, index: usize) -> Option<usize> {
+        match self {
+            Self::Up => index.checked_sub(1),
+            Self::Down => index.checked_add(1),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -539,7 +555,10 @@ impl Store {
             }
             change => {
                 let number = match &change {
-                    Change::Move(n, _) | Change::Edit(n, _) | Change::Remove(n) => *n,
+                    Change::Move(n, _)
+                    | Change::Reorder(n, _, _)
+                    | Change::Edit(n, _)
+                    | Change::Remove(n) => *n,
                     _ => unreachable!(),
                 };
                 let item = day
@@ -553,6 +572,44 @@ impl Store {
                     })?
                     .clone();
                 match change {
+                    Change::Reorder(_, direction, steps) => {
+                        ensure!(steps > 0, "Reorder steps must be greater than zero");
+                        let section: Vec<_> = day
+                            .items
+                            .iter()
+                            .filter(|entry| entry.status == item.status)
+                            .collect();
+                        let index = section
+                            .iter()
+                            .position(|entry| entry.line == item.line)
+                            .unwrap();
+                        let target = match direction {
+                            Direction::Up => index.saturating_sub(steps),
+                            Direction::Down => index.saturating_add(steps).min(section.len() - 1),
+                        };
+                        if target == index {
+                            return Ok(day.clone());
+                        }
+                        let affected = &section[index.min(target)..=index.max(target)];
+                        let mut contents: Vec<_> = affected
+                            .iter()
+                            .map(|entry| {
+                                document.lines[entry.line]
+                                    .trim_end_matches(['\r', '\n'])
+                                    .to_owned()
+                            })
+                            .collect();
+                        match direction {
+                            Direction::Up => contents.rotate_right(1),
+                            Direction::Down => contents.rotate_left(1),
+                        }
+                        // Move item text while leaving comments and line endings in place.
+                        for (entry, content) in affected.iter().zip(contents) {
+                            let raw = &document.lines[entry.line];
+                            let ending = &raw[raw.trim_end_matches(['\r', '\n']).len()..];
+                            document.lines[entry.line] = format!("{content}{ending}");
+                        }
+                    }
                     Change::Edit(_, title) => {
                         document.lines[item.line] = format!(
                             "- {}{}",
