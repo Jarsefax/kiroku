@@ -73,7 +73,7 @@ pub fn select_filtered(
         "No matching items.".to_owned()
     } else {
         let noun = if count == 1 { "item" } else { "items" };
-        format!("{count} matching {noun}. Historical letters are scoped to each date.")
+        format!("{count} matching {noun}.")
     };
     if let Some(active) = active {
         let _ = write!(notice, "\nCopies go to active day {active}.");
@@ -199,6 +199,11 @@ pub fn letter_number(label: &str) -> Result<usize> {
     })
 }
 
+/// Right-align a bracketed item identifier before applying terminal styling.
+pub fn item_label(label: &str, width: usize) -> String {
+    format!("{:>width$}", format!("[{label}]"), width = width + 2)
+}
+
 pub fn render(view: &View, today: NaiveDate) -> String {
     render_styled(view, today, None, false, Style::default())
 }
@@ -232,6 +237,32 @@ pub fn render_styled(
         }
         return output;
     }
+    let label_width = if result_numbers {
+        view.days
+            .iter()
+            .flat_map(|day| &day.items)
+            .filter(|item| filter.is_none_or(|f| f.matches(item)))
+            .count()
+            .to_string()
+            .len()
+    } else {
+        let historical_count: usize = view
+            .days
+            .iter()
+            .filter(|day| Some(day.date) != view.active)
+            .map(|day| day.items.len())
+            .sum();
+        let numeric_width = view
+            .days
+            .iter()
+            .filter(|day| Some(day.date) == view.active)
+            .map(|day| day.items.len().to_string().len())
+            .max()
+            .unwrap_or(1);
+        numeric_width.max(letters(historical_count.saturating_sub(1)).len())
+    };
+    let editable_numbers =
+        filter.is_none() && view.days.iter().all(|day| Some(day.date) == view.active);
     let mut historical_index = 0;
     let mut result_number = 0;
     for day in &view.days {
@@ -240,8 +271,14 @@ pub fn render_styled(
         if day.date == today {
             labels.push("today");
         }
-        if is_active {
+        if is_active && (!result_numbers || editable_numbers) {
             labels.push("active — numbers are editable");
+        } else if is_active {
+            labels.push("active — result numbers are for copying");
+        } else if result_numbers && day.date > today {
+            labels.push("future — result numbers are for copying");
+        } else if result_numbers {
+            labels.push("history — result numbers are for copying");
         } else if day.date > today && filter.is_some() {
             labels.push("future — letters scoped to this date");
         } else if day.date > today {
@@ -272,7 +309,10 @@ pub fn render_styled(
                 let _ = writeln!(output, "    {}", style.muted("(empty)"));
             }
             for (index, item) in items {
-                let label = if is_active {
+                let label = if result_numbers {
+                    result_number += 1;
+                    result_number.to_string()
+                } else if is_active {
                     (index + 1).to_string()
                 } else if filter.is_some() {
                     letters(index)
@@ -281,23 +321,12 @@ pub fn render_styled(
                     historical_index += 1;
                     label
                 };
-                if result_numbers {
-                    result_number += 1;
-                    let _ = writeln!(
-                        output,
-                        "    {} {}. {}",
-                        style.heading(&format!("[{result_number}]")),
-                        style.status(&label, status),
-                        item.title
-                    );
-                } else {
-                    let _ = writeln!(
-                        output,
-                        "    {}. {}",
-                        style.status(&label, status),
-                        item.title
-                    );
-                }
+                let _ = writeln!(
+                    output,
+                    "    {} {}",
+                    style.status(&item_label(&label, label_width), status),
+                    item.title
+                );
             }
         }
         output.push('\n');
@@ -305,8 +334,13 @@ pub fn render_styled(
     if result_numbers && result_number > 0 {
         let _ = writeln!(output, "{}", style.muted("Append `--repeat N` to this command to copy result [N] into active To do. Results are recomputed on each run."));
     }
-    if filter.is_some() {
-        let _ = writeln!(output, "{}", style.muted("Copy a match: `krk repeat NUMBER` (active), or `krk repeat --from YYYY-MM-DD LETTER` (history)."));
+    if result_numbers && result_number > 0 && !editable_numbers {
+        let _ = writeln!(
+            output,
+            "{}",
+            style
+                .muted("For active-day edits, run `krk list` without filters to get item numbers.")
+        );
     }
     output
 }

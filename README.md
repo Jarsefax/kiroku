@@ -141,7 +141,7 @@ is present. On `repeat`, `--from` selects the source and `--date` selects the
 destination; without `--from`, the source number refers to the active day.
 An explicit destination can precede or equal the source date. Date-targeted
 commands print the updated destination with plain bullets. Use `krk list`
-to get current numbers or date-scoped letters. `edit` and `remove` continue
+to get current item numbers or copy-result numbers. `edit` and `remove` continue
 to act on the active day. The TUI also excludes future dates from the active
 day; future records can be browsed and copied but cannot be edited there.
 
@@ -154,16 +154,16 @@ use `krk doing NUMBER` or `krk todo NUMBER`.
 ```sh
 krk repeat 3
 krk list 2026-10-02
-krk repeat --from 2026-10-02 B
+krk list 2026-10-02 --repeat 2
 krk repeat --from 2026-10-02 B --status doing
 ```
 
-Without `--from`, use a current active-day number. With `--from`, select
-another recorded date and use its uppercase letter from `krk list YYYY-MM-DD`.
-Letters are scoped to that single date for repeating. Search and filtered
-results use the same date-scoped letters, so you can copy a result directly.
-Labels from unfiltered multi-day listings can differ. Labels past Z work as
-AA, AB, etc. The source may be in any section.
+Without `--from`, use a current active-day number from an unfiltered
+`krk list`. To copy from history, use `krk list YYYY-MM-DD --repeat N`
+with the displayed bracketed result number. `repeat --from` also accepts
+date-scoped letters: A is the first item, B the second, and labels past Z
+continue as AA, AB, etc. These letters appear in the TUI's historical views.
+The source may be in any section.
 `--status todo|doing|done` selects the new entry's status; the
 default is To do. Without `--date`, copies go to the active day,
 including when it is earlier than today, and do not create a day;
@@ -188,10 +188,12 @@ additions create missing records without this carryover.
 
 If today has not been started, `krk list` says so and shows the latest recorded
 day on or before today. If today exists but is empty, it shows both today
-and the most recent earlier record. Output always labels dates and the active day. Active-day
-items have numbers; historical items have letters (`A`…`Z`, `AA`, etc.).
-Historical letters cannot edit historical entries. `repeat --from` can copy
-one using its letter from a single-date listing or search/filtered results.
+and the most recent earlier record. Output always labels dates and the active
+day. CLI listings use bracketed result numbers across the displayed days.
+Updated active-day output and the TUI use bracketed item numbers; historical
+TUI views use bracketed letters (`[A]`…`[Z]`, `[AA]`, etc.). Item titles align
+even when labels have different lengths. Historical entries cannot be edited;
+use `--repeat N` on a listing or search to copy one.
 
 ### Listing dates
 
@@ -230,10 +232,10 @@ Plain `krk list` retains its usual today/previous-day behavior.
 Results show matching items grouped by date and status, omitting days and
 sections without matches. Every CLI search or listing gives each entry a
 result number in brackets: `[1]`, `[2]`, etc., counted across all displayed
-days. The original source label follows it, for example `[2] B. weekly
-meeting`. Source labels keep their original active-day numbers or
-date-scoped historical letters in filtered results, even if that leaves
-gaps. Repeated titles remain separate occurrences.
+days. Each entry shows just one label, for example `[2] weekly meeting`.
+Titles line up across single- and multi-digit labels. Repeated titles remain
+separate occurrences. Search and multi-day result numbers select copies;
+run `krk list` without filters to get active-day item numbers for edits.
 
 To reuse a result, arrow up in your terminal to recall the same command and
 append `--repeat N`, using the bracketed result number:
@@ -251,8 +253,9 @@ selected by `--date`), preserving the source entry and exact title, and prints
 the copied source and updated destination. `--status` on a search/list
 command still filters source items; the copy always starts in To do.
 Invalid or missing result numbers make no
-changes. The separate `krk repeat` command uses the original source label,
-not the bracketed result number.
+changes. The separate `krk repeat` command uses an active-day item number
+or a date-scoped historical letter. These can differ from search or multi-day
+result numbers.
 
 Results are recomputed every time the command runs. If log contents, filters,
 or relative dates change between runs, the same result number may select a

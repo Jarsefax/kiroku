@@ -166,7 +166,7 @@ enum Command {
     Repeat {
         #[arg(
             value_name = "NUMBER_OR_LETTER",
-            help = "Active-day number, or a letter from a single-date listing with --from"
+            help = "Active-day number, or a date-scoped letter with --from (A = first item, B = second, etc.)"
         )]
         item: String,
         #[arg(short, long, value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Copy from another recorded day; letters are scoped to this date")]

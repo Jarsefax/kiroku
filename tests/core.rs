@@ -341,8 +341,8 @@ fn filtered_results_keep_source_references_and_combine_text_status_and_dates() {
     assert_eq!(view.days[0].items.len(), 4); // Complete sources, not renumbered matches.
     let text = listing::render_filtered(&view, date("2026-10-03"), &filter);
     assert!(text.contains("4 matching items"));
-    assert!(text.contains("[1] C. Weekly meeting"));
-    assert!(text.contains("[4] 4. weekly meeting"));
+    assert!(text.contains("[1] Weekly meeting"));
+    assert!(text.contains("[4] weekly meeting"));
     for (result, source_date, source_number) in [
         (1, "2026-09-30", 3),
         (2, "2026-09-30", 4),
@@ -356,10 +356,10 @@ fn filtered_results_keep_source_references_and_combine_text_status_and_dates() {
     for result in [0, 5, usize::MAX] {
         assert!(view.result(result, Some(&filter)).is_err());
     }
-    assert!(text.contains("C. Weekly meeting"));
-    assert!(text.contains("D. weekly meeting"));
-    assert!(text.contains("C. WEEKLY meeting"));
-    assert!(text.contains("4. weekly meeting"));
+    assert!(text.contains("[1] Weekly meeting"));
+    assert!(text.contains("[2] weekly meeting"));
+    assert!(text.contains("[3] WEEKLY meeting"));
+    assert!(text.contains("[4] weekly meeting"));
     assert!(!text.contains("draft"));
     assert!(!text.contains("unrelated"));
     assert!(text.contains("make today active"));
@@ -480,7 +480,7 @@ fn mutations_target_last_started_day_and_duplicate_titles_are_independent() {
         .unwrap();
     let view = listing::select(&store, None, date("2026-10-05")).unwrap();
     assert_eq!(view.active, Some(date("2026-10-02")));
-    assert!(listing::render(&view, date("2026-10-05")).contains("2. second meeting"));
+    assert!(listing::render(&view, date("2026-10-05")).contains("[2] second meeting"));
     store.change(Change::Move(2, Status::Done), None).unwrap();
     store.change(Change::Move(2, Status::Todo), None).unwrap();
     store.change(Change::Remove(1), None).unwrap();
@@ -506,7 +506,7 @@ fn empty_today_includes_previous_record_with_historical_letters() {
     let rendered = listing::render(&view, date("2026-10-05"));
     assert!(rendered.contains("2026-10-05 (today; active"));
     assert!(rendered.contains("2026-10-02 (history"));
-    assert!(rendered.contains("A. finished"));
+    assert!(rendered.contains("[A] finished"));
     assert!(store.change(Change::Remove(1), None).is_err());
     assert!(
         store
@@ -732,9 +732,9 @@ fn letter_labels_extend_past_z_and_stay_unique_across_days() {
         &listing::select(&store, Some("month"), date("2026-10-03")).unwrap(),
         date("2026-10-03"),
     );
-    assert!(rendered.contains("A. done"));
-    assert!(rendered.contains("B. done"));
-    assert!(rendered.contains("1. done"));
+    assert!(rendered.contains("[A] done"));
+    assert!(rendered.contains("[B] done"));
+    assert!(rendered.contains("[1] done"));
 }
 
 #[test]

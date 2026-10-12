@@ -122,7 +122,7 @@ fn first_title_addition_starts_today_for_each_status_command() {
         let temp = tempfile::tempdir().unwrap();
         let logs = temp.path().join("logs");
         let output = success(&logs, &[command, "first item"]);
-        assert!(output.contains("1. first item"));
+        assert!(output.contains("[1] first item"));
         let store = Store::new(logs);
         let day = store.active().unwrap().unwrap();
         assert_eq!(day.date, Local::now().date_naive());
@@ -268,7 +268,7 @@ fn future_dates_do_not_capture_default_additions_moves_copies_or_new_day() {
     success(logs, &["doing", "1"]);
     assert_eq!(store.active().unwrap().unwrap().date, yesterday);
     let listed = success(logs, &["list", &future_text]);
-    assert!(listed.contains("future — letters"));
+    assert!(listed.contains("future — result numbers"));
     assert!(!listed.contains("numbers are editable"));
     success(logs, &["search", "future plan", "--repeat", "1"]);
     let active = store.active().unwrap().unwrap();
@@ -420,11 +420,11 @@ fn repeat_cli_copies_active_and_date_scoped_historical_items() {
     let path = logs.join("2026-09.md");
     let original = fs::read(&path).unwrap();
     let listing = success(logs, &["list", "2026-09-30"]);
-    assert!(listing.contains("B. möte 日本語"));
-    assert!(listing.contains("AA. 123"));
-    // Labels come from a single-date listing, even when other history exists.
+    assert!(listing.contains("[2] möte 日本語"));
+    assert!(listing.contains("[27] 123"));
+    // Result numbers are scoped to the listing; historical letters remain date-scoped.
     let copied = success(logs, &["repeat", "--from", "2026-09-30", "B"]);
-    assert!(copied.contains("1. möte 日本語"));
+    assert!(copied.contains("[1] möte 日本語"));
     assert!(copied.contains("Updated active day"));
     success(
         logs,
@@ -549,20 +549,20 @@ fn search_and_filtered_list_preserve_copyable_references_without_writing() {
     let found = success(logs, &["search", "  MÖTE  ", "--status", "done"]);
     assert!(found.contains("3 matching items"));
     assert!(found.contains("2026-09-29"));
-    assert!(found.contains("B. möte 日本語"));
-    assert!(found.contains("AA. MÖTE 日本語"));
-    assert!(found.contains("3. möte 日本語"));
+    assert!(found.contains("[1] möte 日本語"));
+    assert!(found.contains("[2] MÖTE 日本語"));
+    assert!(found.contains("[3] möte 日本語"));
     assert!(!found.contains("draft"));
     assert!(!found.contains("unrelated"));
-    assert!(found.contains("krk repeat --from YYYY-MM-DD LETTER"));
+    assert!(found.contains("Append `--repeat N`"));
     assert_eq!(
         success(logs, &["list", "--search", "  MÖTE  ", "--status", "done"]),
         found
     );
     let period = success(logs, &["search", "möte", "2026-09-30", "--status", "done"]);
     assert!(period.contains("1 matching item."));
-    assert!(period.contains("AA. MÖTE 日本語"));
-    assert!(!period.contains("B. möte"));
+    assert!(period.contains("[1] MÖTE 日本語"));
+    assert!(!period.contains("möte 日本語"));
     assert_eq!(
         success(
             logs,
@@ -571,8 +571,8 @@ fn search_and_filtered_list_preserve_copyable_references_without_writing() {
         period
     );
     let status_only = success(logs, &["list", "--status", "doing"]);
-    assert!(status_only.contains("2. möte draft"));
-    assert!(!status_only.contains("3. möte 日本語"));
+    assert!(status_only.contains("[1] möte draft"));
+    assert!(!status_only.contains("[3] möte 日本語"));
     let all = success(logs, &["search", ""]);
     assert!(all.contains("32 matching items"));
     let none = success(logs, &["search", "absent"]);
@@ -772,7 +772,7 @@ fn real_cli_workflow_with_unicode_duplicate_titles_and_errors() {
     success(&logs, &["edit", "3", "möte 日本語"]);
     success(&logs, &["done", "3"]);
     let listing = success(&logs, &["list", "today"]);
-    assert!(listing.contains("3. möte 日本語"));
+    assert!(listing.contains("[3] möte 日本語"));
     let path = logs.join(format!("{}.md", Local::now().format("%Y-%m")));
     let before = fs::read(&path).unwrap();
     for args in [
@@ -1333,4 +1333,55 @@ fn short_global_directory_option_works_before_and_after_subcommands() {
         );
     }
     assert!(!logs.exists());
+}
+
+#[test]
+fn bracketed_labels_align_titles_across_commands_and_colors() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    let store = Store::new(logs.to_path_buf());
+    store.new_day(Local::now().date_naive()).unwrap();
+    for n in 1..=12 {
+        let status = match n {
+            1..=4 => Status::Todo,
+            5..=8 => Status::Doing,
+            _ => Status::Done,
+        };
+        store
+            .change(Change::Add(format!("alignment item {n}"), status), None)
+            .unwrap();
+    }
+    for args in [
+        &["list"][..],
+        &["search", "alignment"],
+        &["list", "--status", "done"],
+        &["edit", "12", "alignment item 12"],
+    ] {
+        let plain = success(logs, args);
+        let mut colored_args = args.to_vec();
+        colored_args.extend(["--color", "always"]);
+        assert_eq!(without_ansi(&success(logs, &colored_args)), plain);
+        let rows: Vec<_> = plain
+            .lines()
+            .filter(|line| line.contains("alignment item"))
+            .collect();
+        assert!(!rows.is_empty());
+        let column = rows[0].find("alignment item").unwrap();
+        for row in &rows {
+            assert_eq!(row.find("alignment item"), Some(column), "{plain}");
+            let prefix = row[..column].trim();
+            assert!(prefix.starts_with('[') && prefix.ends_with(']'), "{row}");
+            assert!(
+                prefix[1..prefix.len() - 1]
+                    .chars()
+                    .all(|c| c.is_ascii_digit()),
+                "{row}"
+            );
+        }
+        if args != ["list", "--status", "done"] {
+            assert_eq!(rows.len(), 12);
+            assert!(plain.contains("[9] alignment item 9"));
+            assert!(plain.contains("[10] alignment item 10"));
+        }
+    }
 }

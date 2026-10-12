@@ -541,6 +541,18 @@ impl App {
         let mut selected_row = None;
         if let Some(search) = &self.search {
             let numbered: Vec<_> = self.days.iter().map(Day::numbered).collect();
+            let label_width = search
+                .results
+                .iter()
+                .map(|&(day_index, item_index)| {
+                    if Some(self.days[day_index].date) == self.active() {
+                        (item_index + 1).to_string().len()
+                    } else {
+                        listing::letters(item_index).len()
+                    }
+                })
+                .max()
+                .unwrap_or(1);
             for (index, &(day_index, item_index)) in search.results.iter().enumerate() {
                 let day = &self.days[day_index];
                 let item = numbered[day_index][item_index];
@@ -550,9 +562,10 @@ impl App {
                     listing::letters(item_index)
                 };
                 rows.push(ListItem::new(format!(
-                    "{}  {label}. [{}] {}",
+                    "{}  {} {:<7} {}",
                     day.date,
-                    item.status.label(),
+                    listing::item_label(&label, label_width),
+                    format!("[{}]", item.status.label()),
                     item.title
                 )));
                 if index == search.selected {
@@ -565,6 +578,11 @@ impl App {
                 ));
             }
         } else if let Some(day) = self.day() {
+            let label_width = if self.editable() {
+                day.items.len().to_string().len()
+            } else {
+                listing::letters(day.items.len().saturating_sub(1)).len()
+            };
             let mut index = 0;
             for status in Status::ALL {
                 rows.push(ListItem::new(Line::from(Span::styled(
@@ -590,7 +608,11 @@ impl App {
                     } else {
                         listing::letters(index)
                     };
-                    rows.push(ListItem::new(format!("  {label}. {}", item.title)));
+                    rows.push(ListItem::new(format!(
+                        "  {} {}",
+                        listing::item_label(&label, label_width),
+                        item.title
+                    )));
                     index += 1;
                 }
             }
@@ -1224,7 +1246,7 @@ mod tests {
                     .map(|cell| cell.symbol())
                     .collect::<String>();
                 assert!(text.contains("1 match |"));
-                assert!(text.contains("AA. [Done] target title"));
+                assert!(text.contains("[AA] [Done]  target title"));
                 assert!(text.contains(&source_date.to_string()));
             }
             press(&mut app, KeyCode::Char('/'));
@@ -1511,6 +1533,52 @@ mod tests {
         );
         press(&mut app, KeyCode::Right);
         assert!(app.editable());
+    }
+
+    #[test]
+    fn bracketed_labels_align_titles_in_browsing_and_search() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        store.new_day(Local::now().date_naive()).unwrap();
+        for n in 1..=12 {
+            store
+                .change(
+                    Change::Add(
+                        format!("alignment item {n}"),
+                        if n <= 6 { Status::Todo } else { Status::Done },
+                    ),
+                    None,
+                )
+                .unwrap();
+        }
+        let mut app = app(store);
+        for searching in [false, true] {
+            if searching {
+                search(&mut app, "alignment");
+            }
+            let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let lines: Vec<String> = buffer
+                .content
+                .chunks(100)
+                .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+                .filter(|line: &String| line.contains("alignment item"))
+                .collect();
+            assert_eq!(lines.len(), 12);
+            let column = lines[0][..lines[0].find("alignment item").unwrap()]
+                .chars()
+                .count();
+            for line in &lines {
+                assert_eq!(
+                    line[..line.find("alignment item").unwrap()].chars().count(),
+                    column,
+                    "{line}"
+                );
+            }
+            assert!(lines.iter().any(|line| line.contains("[9]")));
+            assert!(lines.iter().any(|line| line.contains("[10]")));
+        }
     }
 
     #[test]
