@@ -84,6 +84,7 @@ struct App {
     input: String,
     title_history: Vec<TitleSuggestion>,
     suggestion: Option<usize>,
+    add_position: Option<usize>,
     search: Option<Search>,
     help: bool,
     error_popup: Option<String>,
@@ -223,7 +224,8 @@ impl App {
     }
 
     fn apply(&mut self, change: Change) -> Result<()> {
-        let first_add = matches!(change, Change::Add(..)) && self.active().is_none();
+        let first_add =
+            matches!(change, Change::Add(..) | Change::AddAt(..)) && self.active().is_none();
         ensure!(
             self.editable() || first_add,
             "Only the active day is editable in the TUI; edit other dates in their Markdown files directly"
@@ -321,6 +323,25 @@ impl App {
                         self.input.clear();
                         self.suggestion = None;
                     }
+                    KeyCode::Left | KeyCode::Right
+                        if matches!(prompt, Prompt::Add)
+                            && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        let end = self.active_index().map_or(1, |index| {
+                            self.days[index]
+                                .items
+                                .iter()
+                                .filter(|item| item.status == Status::Todo)
+                                .count()
+                                + 1
+                        });
+                        let position = self.add_position.unwrap_or(end);
+                        self.add_position = Some(if key.code == KeyCode::Left {
+                            position.saturating_sub(1).max(1)
+                        } else {
+                            position.saturating_add(1).min(end)
+                        });
+                    }
                     KeyCode::Backspace => {
                         self.input.pop();
                         self.suggestion = None;
@@ -376,7 +397,10 @@ impl App {
                                         self.suggestions().get(n).map(|entry| entry.title.clone())
                                     })
                                     .unwrap_or_else(|| self.input.clone());
-                                Change::Add(title, Status::Todo)
+                                match self.add_position {
+                                    Some(position) => Change::AddAt(title, Status::Todo, position),
+                                    None => Change::Add(title, Status::Todo),
+                                }
                             }
                             Prompt::Edit(n) => Change::Edit(*n, self.input.clone()),
                             _ => unreachable!(),
@@ -437,6 +461,7 @@ impl App {
                 );
                 self.input.clear();
                 self.suggestion = None;
+                self.add_position = None;
                 self.prompt = Some(Prompt::Add);
             }
             KeyCode::Char('e') if length > 0 => {
@@ -602,15 +627,17 @@ impl App {
             layout[3],
         );
         if self.help {
-            let text = "↑↓ or j/k: navigate items\nK/J (Shift-k/j): reorder up/down within a section\n←→ or h/l: browse recorded days\ng/G or Home/End: first/last item\na: add a title to the active day's To do\nc: copy selected item from any day to active To do\n/: search titles across all recorded days\nSearch: f cycles all/Done/To do/Doing; Enter views source\nSearch: c copies; Esc returns to browsing\ns: Doing   d: Done   t: To do\ne: rename   x: remove (confirm with y)\nn: explicitly start today\nr: reload after editing the Markdown files\n\nHistorical days are read-only in Kiroku.\nPrompt: type, Backspace, Ctrl-U to clear, Enter to save.\nAdd prompt: ↑↓/Tab selects a previous title.\nEsc cancels a prompt. Ctrl-C quits.\n\n? or Esc closes help; q quits.";
+            let text = "↑↓ or j/k: navigate items\nK/J (Shift-k/j): reorder up/down within a section\n←→ or h/l: browse recorded days\ng/G or Home/End: first/last item\na: add a title to the active day's To do\nc: copy selected item from any day to active To do\n/: search titles across all recorded days\nSearch: f cycles all/Done/To do/Doing; Enter views source\nSearch: c copies; Esc returns to browsing\ns: Doing   d: Done   t: To do\ne: rename   x: remove (confirm with y)\nn: explicitly start today\nr: reload after editing the Markdown files\n\nHistorical days are read-only in Kiroku.\nPrompt: type, Backspace, Ctrl-U to clear, Enter to save.\nAdd prompt: ↑↓/Tab selects a previous title; Ctrl-←/→ chooses insertion position.\nEsc cancels a prompt. Ctrl-C quits.\n\n? or Esc closes help; q quits.";
             popup(frame, area, " Keyboard help ", text, 24);
         }
         if let Some(prompt) = &self.prompt {
             let (title, text) = match prompt {
                 Prompt::Add => {
                     let mut text = format!(
-                        "{}\n\n↑↓/Tab selects a previous title; Enter saves.\n",
-                        self.input
+                        "{}\n\nPosition: {}. Ctrl-←/→ changes it.\n↑↓/Tab selects a previous title; Enter saves.\n",
+                        self.input,
+                        self.add_position
+                            .map_or_else(|| "end (append)".into(), |n| n.to_string())
                     );
                     for (n, entry) in self.suggestions().iter().enumerate() {
                         let marker = if self.suggestion == Some(n) {
@@ -695,6 +722,7 @@ pub fn run(store: Store) -> Result<()> {
         input: String::new(),
         title_history: vec![],
         suggestion: None,
+        add_position: None,
         search: None,
         help: false,
         error_popup: None,
@@ -754,6 +782,7 @@ mod tests {
             input: String::new(),
             title_history: vec![],
             suggestion: None,
+            add_position: None,
             search: None,
             help: false,
             error_popup: None,
@@ -818,6 +847,52 @@ mod tests {
             "historical"
         );
         assert_eq!(active.numbered()[0].title, "second");
+    }
+
+    #[test]
+    fn add_position_keys_insert_and_reset_without_changing_suggestion_navigation() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        store
+            .change(Change::Add("first".into(), Status::Todo), None)
+            .unwrap();
+        store
+            .change(Change::Add("last".into(), Status::Todo), None)
+            .unwrap();
+        let mut app = app(store.clone());
+        press(&mut app, KeyCode::Char('a'));
+        for _ in 0..4 {
+            app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL))
+                .unwrap();
+        }
+        assert_eq!(app.add_position, Some(1));
+        app.key(KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.add_position, Some(2));
+        app.input = "middle".into();
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            store
+                .active()
+                .unwrap()
+                .unwrap()
+                .numbered()
+                .iter()
+                .map(|i| i.title.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "middle", "last"]
+        );
+        press(&mut app, KeyCode::Char('a'));
+        assert_eq!(app.add_position, None);
+        for _ in 0..5 {
+            app.key(KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL))
+                .unwrap();
+        }
+        assert_eq!(app.add_position, Some(4));
+        press(&mut app, KeyCode::Down);
+        assert!(app.suggestion.is_some());
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(store.active().unwrap().unwrap().items.len(), 3);
     }
 
     fn search(app: &mut App, query: &str) {

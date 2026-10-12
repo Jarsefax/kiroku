@@ -65,12 +65,25 @@ impl ColorMode {
 
 #[derive(clap::Args)]
 struct AddTarget {
+    #[arg(
+        long,
+        value_name = "N",
+        help = "Insert at this one-based position within the destination section (default: append)"
+    )]
+    position: Option<std::num::NonZeroUsize>,
     #[arg(long, value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Add to this date instead of the active day")]
     date: Option<NaiveDate>,
 }
 
 #[derive(clap::Args)]
 struct CopyResult {
+    #[arg(
+        long,
+        requires = "repeat",
+        value_name = "N",
+        help = "Insert the copy at this one-based position in To do (requires --repeat)"
+    )]
+    position: Option<std::num::NonZeroUsize>,
     #[arg(
         long,
         value_name = "RESULT_NUMBER",
@@ -208,14 +221,22 @@ fn output(text: &str) -> Result<()> {
     }
 }
 
-fn status_change(value: String, status: Status) -> Result<Change> {
+fn status_change(
+    value: String,
+    status: Status,
+    position: Option<std::num::NonZeroUsize>,
+) -> Result<Change> {
     if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
-        Ok(Change::Move(
-            value.parse().context("Item number is too large")?,
-            status,
-        ))
+        let number = value.parse().context("Item number is too large")?;
+        Ok(match position {
+            Some(position) => Change::MoveAt(number, status, position.get()),
+            None => Change::Move(number, status),
+        })
     } else {
-        Ok(Change::Add(value, status))
+        Ok(match position {
+            Some(position) => Change::AddAt(value, status, position.get()),
+            None => Change::Add(value, status),
+        })
     }
 }
 
@@ -275,12 +296,13 @@ fn show_or_repeat(
     if let Some(result) = copy.repeat {
         let (source, number) = view.result(result, filter)?;
         if let Some(date) = copy.date {
-            let day = store.repeat_on_date(
+            let day = store.repeat_on_date_at(
                 date,
                 Some(source.date),
                 number,
                 Status::Todo,
                 Some(source),
+                copy.position.map(|n| n.get()),
             )?;
             output(&format!(
                 "Repeated result {result} from {}: {}\n\n",
@@ -297,7 +319,14 @@ fn show_or_repeat(
             "The active day changed during the search or listing. Rerun the command"
         );
         let from = (source.date != active.date).then_some(source.date);
-        let day = store.repeat(from, number, Status::Todo, Some(source), Some(&active))?;
+        let day = store.repeat_at(
+            from,
+            number,
+            Status::Todo,
+            Some(source),
+            Some(&active),
+            copy.position.map(|n| n.get()),
+        )?;
         output(&format!(
             "Repeated result {result} from {}: {}\n\n",
             style.heading(&source.date.to_string()),
@@ -375,11 +404,18 @@ fn run(args: Args, style: Style) -> Result<()> {
                 style,
             ));
         }
-        Some(Command::Doing { value, target }) => {
-            (status_change(value, Status::Doing)?, target.date)
-        }
-        Some(Command::Done { value, target }) => (status_change(value, Status::Done)?, target.date),
-        Some(Command::Todo { value, target }) => (status_change(value, Status::Todo)?, target.date),
+        Some(Command::Doing { value, target }) => (
+            status_change(value, Status::Doing, target.position)?,
+            target.date,
+        ),
+        Some(Command::Done { value, target }) => (
+            status_change(value, Status::Done, target.position)?,
+            target.date,
+        ),
+        Some(Command::Todo { value, target }) => (
+            status_change(value, Status::Todo, target.position)?,
+            target.date,
+        ),
         Some(Command::Repeat {
             item,
             from,
@@ -397,12 +433,26 @@ fn run(args: Args, style: Style) -> Result<()> {
             };
             if let Some(date) = target.date {
                 return updated_date(
-                    store.repeat_on_date(date, from, number, status.into(), None)?,
+                    store.repeat_on_date_at(
+                        date,
+                        from,
+                        number,
+                        status.into(),
+                        None,
+                        target.position.map(|n| n.get()),
+                    )?,
                     style,
                 );
             }
             return updated(
-                store.repeat(from, number, status.into(), None, None)?,
+                store.repeat_at(
+                    from,
+                    number,
+                    status.into(),
+                    None,
+                    None,
+                    target.position.map(|n| n.get()),
+                )?,
                 today,
                 style,
             );
@@ -426,12 +476,14 @@ fn run(args: Args, style: Style) -> Result<()> {
         Some(Command::Remove { number }) => (Change::Remove(number), None),
     };
     if let Some(date) = date {
-        let Change::Add(title, status) = change else {
-            anyhow::bail!(
+        let (title, status, position) = match change {
+            Change::Add(title, status) => (title, status, None),
+            Change::AddAt(title, status, position) => (title, status, Some(position)),
+            _ => anyhow::bail!(
                 "--date adds titles or copies items; numbered moves still apply to the active day"
-            );
+            ),
         };
-        return updated_date(store.add_on_date(date, &title, status)?, style);
+        return updated_date(store.add_on_date_at(date, &title, status, position)?, style);
     }
     updated(store.change(change, None)?, today, style)
 }

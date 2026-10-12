@@ -244,6 +244,33 @@ krk repeat --from 2026-10-02 B
 Use the date and letter from your results. Start today before searching so
 the displayed references reflect the active day you intend to copy into.
 
+## Choosing an insertion position
+
+Use `--position N` when adding a title, moving an item into a section, or
+copying an item. Positions start at **1 within the destination section**,
+independently of the item numbers shown by `krk list`. Existing items at
+that position and later shift down. Omitting the option appends as before.
+
+```bash
+krk todo "urgent task" --position 1
+krk doing 3 --position 2
+krk repeat 4 --status done --position 1
+krk todo "backfill" --date 2026-10-05 --position 2
+krk search "meeting" --repeat 1 --position 1
+krk list yesterday --repeat 1 --position 1
+```
+
+For a section containing three items, valid insertion positions are 1–4;
+4 appends. An empty section accepts only 1. Out-of-range positions fail
+without saving changes. When moving an item within its current section,
+the position specifies its final place after removing its old entry.
+`--position` also works with `--date`; on `list` and `search` it requires
+`--repeat`.
+
+In the terminal add prompt, use Ctrl-←/→ to choose an insertion position
+in To do. The prompt displays the chosen position and defaults to appending.
+↑/↓ and Tab still select previous titles.
+
 ## Keyboard navigation
 
 | Key | Action |

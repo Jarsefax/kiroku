@@ -280,20 +280,36 @@ impl Document {
         })
     }
 
-    fn insert_item(&mut self, day_index: usize, status: Status, title: &str) {
+    fn insert_item(
+        &mut self,
+        day_index: usize,
+        status: Status,
+        title: &str,
+        position: Option<usize>,
+    ) -> Result<()> {
         let day = &self.days[day_index];
-        let last = day
-            .items
-            .iter()
-            .filter(|i| i.status == status)
-            .map(|i| i.line)
-            .max();
-        let insertion = last.map_or(day.headings[status.index()] + 1, |line| line + 1);
+        let section: Vec<_> = day.items.iter().filter(|i| i.status == status).collect();
+        let position = position.unwrap_or(section.len() + 1);
+        ensure!(
+            (1..=section.len() + 1).contains(&position),
+            "Position must be between 1 and {} in {}",
+            section.len() + 1,
+            status.label()
+        );
+        let insertion = section.get(position - 1).map_or_else(
+            || {
+                section
+                    .last()
+                    .map_or(day.headings[status.index()] + 1, |item| item.line + 1)
+            },
+            |item| item.line,
+        );
         if insertion > 0 && !self.lines[insertion - 1].ends_with('\n') {
             self.lines[insertion - 1].push_str(self.newline);
         }
         self.lines
             .insert(insertion, format!("- {title}{}", self.newline));
+        Ok(())
     }
 
     fn ensure_day(&mut self, date: NaiveDate) -> Result<usize> {
@@ -354,7 +370,9 @@ impl Document {
 #[derive(Clone, Debug)]
 pub enum Change {
     Add(String, Status),
+    AddAt(String, Status, usize),
     Move(usize, Status),
+    MoveAt(usize, Status, usize),
     Reorder(usize, Direction, usize),
     Edit(usize, String),
     Remove(usize),
@@ -536,8 +554,19 @@ impl Store {
                     expected.is_none(),
                     "The active day changed outside this view. Reload it before editing"
                 );
-                if let Change::Add(title, status) = change {
-                    return self.insert_on_date(today, validate_title(&title)?, status);
+                match change {
+                    Change::Add(title, status) => {
+                        return self.insert_on_date(today, validate_title(&title)?, status, None);
+                    }
+                    Change::AddAt(title, status, position) => {
+                        return self.insert_on_date(
+                            today,
+                            validate_title(&title)?,
+                            status,
+                            Some(position),
+                        );
+                    }
+                    _ => (),
                 }
                 bail!("No day has been started. Run `krk new-day` first");
             }
@@ -551,11 +580,15 @@ impl Store {
         }
         match change {
             Change::Add(title, status) => {
-                document.insert_item(day_index, status, validate_title(&title)?)
+                document.insert_item(day_index, status, validate_title(&title)?, None)?
+            }
+            Change::AddAt(title, status, position) => {
+                document.insert_item(day_index, status, validate_title(&title)?, Some(position))?
             }
             change => {
                 let number = match &change {
                     Change::Move(n, _)
+                    | Change::MoveAt(n, _, _)
                     | Change::Reorder(n, _, _)
                     | Change::Edit(n, _)
                     | Change::Remove(n) => *n,
@@ -628,7 +661,12 @@ impl Store {
                     Change::Move(_, status) => {
                         document.lines.remove(item.line);
                         document.reparse()?;
-                        document.insert_item(day_index, status, &item.title);
+                        document.insert_item(day_index, status, &item.title, None)?;
+                    }
+                    Change::MoveAt(_, status, position) => {
+                        document.lines.remove(item.line);
+                        document.reparse()?;
+                        document.insert_item(day_index, status, &item.title, Some(position))?;
                     }
                     _ => unreachable!(),
                 }
@@ -641,17 +679,33 @@ impl Store {
 
     /// Add to an explicit date, creating an empty day without rollover.
     pub fn add_on_date(&self, date: NaiveDate, title: &str, status: Status) -> Result<Day> {
+        self.add_on_date_at(date, title, status, None)
+    }
+
+    pub fn add_on_date_at(
+        &self,
+        date: NaiveDate,
+        title: &str,
+        status: Status,
+        position: Option<usize>,
+    ) -> Result<Day> {
         let title = validate_title(title)?;
         let _lock = self.lock()?;
-        self.insert_on_date(date, title, status)
+        self.insert_on_date(date, title, status, position)
     }
 
     // The caller holds the directory lock through loading, insertion and save.
-    fn insert_on_date(&self, date: NaiveDate, title: &str, status: Status) -> Result<Day> {
+    fn insert_on_date(
+        &self,
+        date: NaiveDate,
+        title: &str,
+        status: Status,
+        position: Option<usize>,
+    ) -> Result<Day> {
         let path = self.dir.join(format!("{}.md", date.format("%Y-%m")));
         let mut document = Document::read_or_empty(path)?;
         let index = document.ensure_day(date)?;
-        document.insert_item(index, status, title);
+        document.insert_item(index, status, title, position)?;
         document.reparse()?;
         // Backfilling or planning a month does not close the active month.
         document.save(false)?;
@@ -667,6 +721,18 @@ impl Store {
         number: usize,
         status: Status,
         expected_source: Option<&Day>,
+    ) -> Result<Day> {
+        self.repeat_on_date_at(date, from, number, status, expected_source, None)
+    }
+
+    pub fn repeat_on_date_at(
+        &self,
+        date: NaiveDate,
+        from: Option<NaiveDate>,
+        number: usize,
+        status: Status,
+        expected_source: Option<&Day>,
+        position: Option<usize>,
     ) -> Result<Day> {
         let _lock = self.lock()?;
         let source = if let Some(from) = from {
@@ -688,7 +754,7 @@ impl Store {
             .get(number.wrapping_sub(1))
             .copied()
             .with_context(|| format!("No source item {number} on {}", source.date))?;
-        self.insert_on_date(date, &item.title, status)
+        self.insert_on_date(date, &item.title, status, position)
     }
 
     /// Copy a source item into the active day without changing its original entry.
@@ -702,6 +768,18 @@ impl Store {
         status: Status,
         expected_source: Option<&Day>,
         expected_active: Option<&Day>,
+    ) -> Result<Day> {
+        self.repeat_at(from, number, status, expected_source, expected_active, None)
+    }
+
+    pub fn repeat_at(
+        &self,
+        from: Option<NaiveDate>,
+        number: usize,
+        status: Status,
+        expected_source: Option<&Day>,
+        expected_active: Option<&Day>,
+        position: Option<usize>,
     ) -> Result<Day> {
         let _lock = self.lock()?;
         let (mut document, day_index) = self
@@ -737,7 +815,7 @@ impl Store {
             .copied()
             .with_context(|| format!("No source item {number} on {}", source.date))?
             .clone();
-        document.insert_item(day_index, status, &item.title);
+        document.insert_item(day_index, status, &item.title, position)?;
         document.reparse()?;
         document.save(true)?;
         Ok(document.days[day_index].clone())

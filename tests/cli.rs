@@ -1013,3 +1013,170 @@ fn reorder_steps_option_accepts_positive_counts_and_clamps_to_section() {
         assert_eq!(titles(), ["first", "second", "third", "fourth", "working"]);
     }
 }
+
+#[test]
+fn position_option_inserts_additions_moves_and_copies_within_the_target_section() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    for status in ["todo", "doing", "done"] {
+        success(logs, &[status, "last"]);
+        success(logs, &[status, "first", "--position", "1"]);
+        success(logs, &[status, "middle", "--position", "2"]);
+        success(logs, &[status, "end", "--position", "4"]);
+    }
+    let store = Store::new(logs.to_path_buf());
+    for status in Status::ALL {
+        let day = store.active().unwrap().unwrap();
+        let titles: Vec<_> = day
+            .items
+            .iter()
+            .filter(|i| i.status == status)
+            .map(|i| i.title.as_str())
+            .collect();
+        assert_eq!(titles, ["first", "middle", "last", "end"]);
+    }
+    success(logs, &["doing", "2", "--position", "2"]);
+    success(logs, &["todo", "3", "--position", "1"]); // Same-section move.
+    success(
+        logs,
+        &["repeat", "1", "--status", "done", "--position", "2"],
+    );
+    success(
+        logs,
+        &[
+            "search",
+            "middle",
+            "--status",
+            "doing",
+            "--repeat",
+            "1",
+            "--position",
+            "2",
+        ],
+    );
+    success(
+        logs,
+        &[
+            "list",
+            "--status",
+            "done",
+            "--repeat",
+            "1",
+            "--position",
+            "1",
+        ],
+    );
+    let day = store.active().unwrap().unwrap();
+    assert_eq!(
+        day.items
+            .iter()
+            .filter(|i| i.status == Status::Todo)
+            .map(|i| i.title.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "end", "middle", "first", "last"]
+    );
+    assert_eq!(
+        day.items
+            .iter()
+            .filter(|i| i.status == Status::Doing)
+            .map(|i| i.title.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "middle", "middle", "last", "end"]
+    );
+    assert_eq!(
+        day.items
+            .iter()
+            .filter(|i| i.status == Status::Done)
+            .map(|i| i.title.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "end", "middle", "last", "end"]
+    );
+
+    for command in ["todo", "doing", "done"] {
+        success(logs, &[command, "dated last", "--date", "2025-01-01"]);
+        success(
+            logs,
+            &[
+                command,
+                "dated first",
+                "--date",
+                "2025-01-01",
+                "--position",
+                "1",
+            ],
+        );
+    }
+    success(
+        logs,
+        &["repeat", "1", "--date", "2025-01-01", "--position", "2"],
+    );
+    success(
+        logs,
+        &[
+            "search",
+            "dated first",
+            "2025-01-01",
+            "--status",
+            "done",
+            "--repeat",
+            "1",
+            "--date",
+            "2025-01-01",
+            "--position",
+            "1",
+        ],
+    );
+    let dated = store
+        .days(Some((
+            parse_date("2025-01-01").unwrap(),
+            parse_date("2025-01-01").unwrap(),
+        )))
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(
+        dated
+            .items
+            .iter()
+            .filter(|i| i.status == Status::Todo)
+            .map(|i| i.title.as_str())
+            .collect::<Vec<_>>(),
+        ["dated first", "dated first", "first", "dated last"]
+    );
+}
+
+#[test]
+fn invalid_positions_leave_existing_logs_and_missing_days_unchanged() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    success(logs, &["todo", "source"]);
+    let path = logs.join(format!("{}.md", Local::now().format("%Y-%m")));
+    let before = fs::read(&path).unwrap();
+    for args in [
+        &["todo", "new", "--position", "0"][..],
+        &["doing", "new", "--position", "2"],
+        &["done", "1", "--position", "2"],
+        &["todo", "1", "--position", "2"],
+        &["repeat", "1", "--position", "3"],
+        &["search", "source", "--repeat", "1", "--position", "3"],
+        &["list", "--position", "1"],
+        &["todo", "new", "--date", "2025-01-01", "--position", "2"],
+        &["repeat", "1", "--date", "2025-01-01", "--position", "2"],
+    ] {
+        assert!(!run(logs, args).status.success(), "{args:?}");
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert!(!logs.join("2025-01.md").exists());
+    }
+    let missing = logs.join("missing");
+    assert!(
+        !run(&missing, &["todo", "first", "--position", "2"])
+            .status
+            .success()
+    );
+    assert!(
+        !missing
+            .join(format!("{}.md", Local::now().format("%Y-%m")))
+            .exists()
+    );
+    success(&missing, &["todo", "first", "--position", "1"]);
+}
