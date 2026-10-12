@@ -56,6 +56,27 @@ nonempty, single-line text; Unicode and duplicate titles are supported.
 even when quoted; all other text is a new title. Invalid item numbers produce
 an error. Quote titles containing spaces.
 
+### Short commands
+
+Every command has a short alias. Aliases accept the same arguments and
+options as the full command and appear in `krk --help`.
+
+| Command | Alias |
+| --- | --- |
+| `list` | `l` |
+| `search` | `s` |
+| `todo` | `t` |
+| `doing` | `do` |
+| `done` | `d` |
+| `new-day` | `n` |
+| `repeat` | `r` |
+| `edit` | `e` |
+| `move` | `m` |
+| `remove` | `x` |
+| `path` | `p` |
+
+For example, `krk l week`, `krk t "urgent task"`, and `krk m 3 up -n 2`.
+
 ### Short options
 
 Every command option also has a short form. Global options work before or

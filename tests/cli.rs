@@ -1385,3 +1385,78 @@ fn bracketed_labels_align_titles_across_commands_and_colors() {
         }
     }
 }
+
+#[test]
+fn short_command_aliases_match_full_commands_and_appear_in_help() {
+    let short_logs = tempfile::tempdir().unwrap();
+    let long_logs = tempfile::tempdir().unwrap();
+    let workflows: &[(&str, &str, &[&str])] = &[
+        ("n", "new-day", &[]),
+        ("t", "todo", &["first task"]),
+        ("t", "todo", &["second task", "-p", "1"]),
+        ("do", "doing", &["1"]),
+        ("d", "done", &["2"]),
+        ("r", "repeat", &["2", "--status", "todo"]),
+        ("e", "edit", &["1", "renamed task"]),
+        ("m", "move", &["1", "down", "-n", "2"]),
+        ("l", "list", &["today", "-c", "never"]),
+        ("s", "search", &["task", "--status", "done"]),
+        ("s", "search", &["task", "--repeat", "1"]),
+        ("x", "remove", &["1"]),
+    ];
+    for &(alias, command, args) in workflows {
+        let mut short_args = vec![alias];
+        short_args.extend_from_slice(args);
+        let mut long_args = vec![command];
+        long_args.extend_from_slice(args);
+        assert_eq!(
+            success(short_logs.path(), &short_args),
+            success(long_logs.path(), &long_args),
+            "{command}"
+        );
+        let short_day = Store::new(short_logs.path().to_path_buf())
+            .active()
+            .unwrap()
+            .unwrap();
+        let long_day = Store::new(long_logs.path().to_path_buf())
+            .active()
+            .unwrap()
+            .unwrap();
+        let contents = |day: &kiroku::storage::Day| {
+            day.numbered()
+                .iter()
+                .map(|item| (item.title.clone(), item.status))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(contents(&short_day), contents(&long_day), "{command}");
+    }
+    assert_eq!(
+        success(short_logs.path(), &["p"]),
+        success(short_logs.path(), &["path"])
+    );
+    let help = success(short_logs.path(), &["--help"]);
+    for (alias, command) in [
+        ("n", "new-day"),
+        ("l", "list"),
+        ("s", "search"),
+        ("do", "doing"),
+        ("d", "done"),
+        ("t", "todo"),
+        ("r", "repeat"),
+        ("e", "edit"),
+        ("m", "move"),
+        ("x", "remove"),
+        ("p", "path"),
+    ] {
+        assert!(
+            help.lines()
+                .any(|line| line.trim_start().starts_with(command)
+                    && line.contains(&format!("[alias: {alias}]"))),
+            "{help}"
+        );
+        assert_eq!(
+            success(short_logs.path(), &[alias, "--help"]),
+            success(short_logs.path(), &[command, "--help"])
+        );
+    }
+}

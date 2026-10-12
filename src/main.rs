@@ -102,8 +102,10 @@ struct CopyResult {
 #[derive(Subcommand)]
 enum Command {
     /// Explicitly start today and carry unfinished items into To do
+    #[command(visible_alias = "n")]
     NewDay,
     /// List today, a relative period, a date, or an inclusive FROM..TO range
+    #[command(visible_alias = "l")]
     List {
         #[arg(
             value_name = "PERIOD",
@@ -128,6 +130,7 @@ enum Command {
         copy: CopyResult,
     },
     /// Search titles across all recorded days, or within a selected period
+    #[command(visible_alias = "s")]
     Search {
         #[arg(value_name = "TEXT")]
         query: String,
@@ -142,6 +145,7 @@ enum Command {
         copy: CopyResult,
     },
     /// Add a title, or move a numbered active-day item into Doing
+    #[command(visible_alias = "do")]
     Doing {
         #[arg(value_name = "TITLE_OR_NUMBER")]
         value: String,
@@ -149,6 +153,7 @@ enum Command {
         target: AddTarget,
     },
     /// Add a title, or move a numbered active-day item into Done
+    #[command(visible_alias = "d")]
     Done {
         #[arg(value_name = "TITLE_OR_NUMBER")]
         value: String,
@@ -156,6 +161,7 @@ enum Command {
         target: AddTarget,
     },
     /// Add a title, or move a numbered active-day item back into To do
+    #[command(visible_alias = "t")]
     Todo {
         #[arg(value_name = "TITLE_OR_NUMBER")]
         value: String,
@@ -163,6 +169,7 @@ enum Command {
         target: AddTarget,
     },
     /// Copy an item into the active day, preserving its original entry
+    #[command(visible_alias = "r")]
     Repeat {
         #[arg(
             value_name = "NUMBER_OR_LETTER",
@@ -183,8 +190,10 @@ enum Command {
         target: AddTarget,
     },
     /// Rename an active-day item
+    #[command(visible_alias = "e")]
     Edit { number: usize, title: String },
     /// Move an active-day item up or down within its section
+    #[command(visible_alias = "m")]
     Move {
         number: usize,
         #[arg(value_enum)]
@@ -194,8 +203,10 @@ enum Command {
         steps: std::num::NonZeroUsize,
     },
     /// Remove an active-day item
+    #[command(visible_alias = "x")]
     Remove { number: usize },
     /// Print the resolved log directory
+    #[command(visible_alias = "p")]
     Path,
 }
 
