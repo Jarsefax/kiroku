@@ -55,6 +55,24 @@ nonempty, single-line text; Unicode and duplicate titles are supported.
 even when quoted; all other text is a new title. Invalid item numbers produce
 an error. Quote titles containing spaces.
 
+### Command output colors
+
+Commands use color automatically when writing to a terminal: cyan dates and
+result numbers, blue **To do**, yellow **Doing**, green **Done**, dimmed hints,
+and red error prefixes. Item titles keep the terminal's default color.
+Piped or redirected output stays plain, as does `krk path`.
+
+Use the global `--color auto|always|never` option to control command output:
+
+```sh
+krk list --color always
+krk --color never search "meeting"
+```
+
+In auto mode, a nonempty `NO_COLOR` environment variable or `TERM=dumb`
+disables colors. Explicit `--color always` overrides these settings.
+This option applies to command output; the interactive TUI keeps its own styling.
+
 ### Adding to a specific date
 
 Use `--date YYYY-MM-DD` on a command that adds a title or copies an item:

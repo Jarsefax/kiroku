@@ -24,6 +24,94 @@ fn success(directory: &std::path::Path, args: &[&str]) -> String {
     String::from_utf8(result.stdout).unwrap()
 }
 
+fn without_ansi(text: &str) -> String {
+    let mut plain = String::new();
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            assert_eq!(chars.next(), Some('['));
+            for ch in chars.by_ref() {
+                if ch == 'm' {
+                    break;
+                }
+            }
+        } else {
+            plain.push(ch);
+        }
+    }
+    plain
+}
+
+#[test]
+fn colored_listings_preserve_text_references_and_stored_titles() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    for (command, title) in [
+        ("todo", "plan café"),
+        ("doing", "möte 日本語"),
+        ("done", "finished"),
+    ] {
+        let output = success(
+            logs,
+            &[command, title, "--date", "2026-10-06", "--color", "always"],
+        );
+        assert!(output.contains('\x1b'));
+        assert!(output.contains(title));
+    }
+    let stored = fs::read(logs.join("2026-10.md")).unwrap();
+    assert!(!stored.contains(&0x1b));
+    for args in [
+        &["list", "2026-10-06"][..],
+        &["search", "möte", "2026-10-06"],
+        &["list", "2026-10-06", "--status", "done"],
+        &["list", "2026-09-01"],
+    ] {
+        let plain = success(logs, args);
+        assert!(!plain.contains('\x1b'), "Piped output must be plain");
+        let mut colored_args = args.to_vec();
+        colored_args.extend(["--color", "always"]);
+        let colored = success(logs, &colored_args);
+        assert!(colored.contains('\x1b'));
+        assert_eq!(without_ansi(&colored), plain);
+        let mut never_args = args.to_vec();
+        never_args.extend(["--color", "never"]);
+        assert_eq!(success(logs, &never_args), plain);
+    }
+    let colored = success(logs, &["list", "2026-10-06", "--color", "always"]);
+    for (code, label) in [("1;34", "To do"), ("1;33", "Doing"), ("1;32", "Done")] {
+        assert!(colored.contains(&format!("\x1b[{code}m{label}\x1b[0m")));
+    }
+    assert_eq!(fs::read(logs.join("2026-10.md")).unwrap(), stored);
+}
+
+#[test]
+fn explicit_color_overrides_environment_and_styles_runtime_errors() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    let output = Command::new(env!("CARGO_BIN_EXE_krk"))
+        .arg("--data-dir")
+        .arg(logs)
+        .args(["list", "--color", "always"])
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stdout.contains(&0x1b));
+    assert!(!success(logs, &["path", "--color", "always"]).contains('\x1b'));
+
+    let plain = run(logs, &["done", "1", "--color", "never"]);
+    let colored = run(logs, &["done", "1", "--color", "always"]);
+    assert!(!plain.status.success());
+    assert!(!colored.status.success());
+    let stderr = String::from_utf8(colored.stderr).unwrap();
+    assert!(stderr.contains("\x1b[1;31mkrk:\x1b[0m"));
+    assert_eq!(
+        without_ansi(&stderr),
+        String::from_utf8(plain.stderr).unwrap()
+    );
+}
+
 #[test]
 fn first_title_addition_starts_today_for_each_status_command() {
     for (command, status) in [

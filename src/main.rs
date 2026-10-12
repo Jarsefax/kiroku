@@ -7,9 +7,10 @@ use kiroku::{
     config,
     listing::{self, View},
     storage::{Change, Day, Status, Store, parse_date},
+    style::Style,
 };
 use std::{
-    io::{self, Write},
+    io::{self, IsTerminal, Write},
     path::PathBuf,
 };
 
@@ -27,8 +28,39 @@ struct Args {
         help = "Override the log directory"
     )]
     data_dir: Option<PathBuf>,
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        default_value = "auto",
+        help = "Color command output: auto, always, or never"
+    )]
+    color: ColorMode,
     #[command(subcommand)]
     command: Option<Command>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ColorMode {
+    Auto,
+    Always,
+    Never,
+}
+
+impl ColorMode {
+    fn style(self, terminal: bool) -> Style {
+        Style {
+            enabled: match self {
+                Self::Always => true,
+                Self::Never => false,
+                Self::Auto => {
+                    terminal
+                        && std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
+                        && std::env::var_os("TERM").is_none_or(|value| value != "dumb")
+                }
+            },
+        }
+    }
 }
 
 #[derive(clap::Args)]
@@ -172,29 +204,32 @@ fn status_change(value: String, status: Status) -> Result<Change> {
     }
 }
 
-fn updated(day: Day, today: chrono::NaiveDate) -> Result<()> {
-    output(&listing::render(
+fn updated(day: Day, today: chrono::NaiveDate, style: Style) -> Result<()> {
+    output(&listing::render_styled(
         &View {
             active: Some(day.date),
             days: vec![day],
             notice: "Updated active day; item numbers may have changed.".into(),
         },
         today,
+        None,
+        false,
+        style,
     ))
 }
 
-fn updated_date(day: Day) -> Result<()> {
+fn updated_date(day: Day, style: Style) -> Result<()> {
     // A targeted historical addition must not advertise active-day numbers.
-    let mut text = format!("Updated {}.\n\n", day.date);
+    let mut text = format!("{}\n\n", style.heading(&format!("Updated {}.", day.date)));
     for status in Status::ALL {
-        text.push_str(&format!("  {}\n", status.label()));
+        text.push_str(&format!("  {}\n", style.status(status.label(), status)));
         let mut empty = true;
         for item in day.items.iter().filter(|item| item.status == status) {
             text.push_str(&format!("    - {}\n", item.title));
             empty = false;
         }
         if empty {
-            text.push_str("    (empty)\n");
+            text.push_str(&format!("    {}\n", style.muted("(empty)")));
         }
     }
     output(&text)
@@ -207,10 +242,11 @@ fn filtered_list(
     status: Option<CliStatus>,
     copy: CopyResult,
     today: chrono::NaiveDate,
+    style: Style,
 ) -> Result<()> {
     let filter = listing::Filter::new(query, status.map(Into::into))?;
     let view = listing::select_filtered(store, period, today, &filter)?;
-    show_or_repeat(store, view, Some(&filter), copy, today)
+    show_or_repeat(store, view, Some(&filter), copy, today, style)
 }
 
 fn show_or_repeat(
@@ -219,6 +255,7 @@ fn show_or_repeat(
     filter: Option<&listing::Filter>,
     copy: CopyResult,
     today: chrono::NaiveDate,
+    style: Style,
 ) -> Result<()> {
     if let Some(result) = copy.repeat {
         let (source, number) = view.result(result, filter)?;
@@ -232,10 +269,10 @@ fn show_or_repeat(
             )?;
             output(&format!(
                 "Repeated result {result} from {}: {}\n\n",
-                source.date,
+                style.heading(&source.date.to_string()),
                 source.numbered()[number - 1].title
             ))?;
-            return updated_date(day);
+            return updated_date(day, style);
         }
         let active = store
             .active()?
@@ -248,19 +285,15 @@ fn show_or_repeat(
         let day = store.repeat(from, number, Status::Todo, Some(source), Some(&active))?;
         output(&format!(
             "Repeated result {result} from {}: {}\n\n",
-            source.date,
+            style.heading(&source.date.to_string()),
             source.numbered()[number - 1].title
         ))?;
-        return updated(day, today);
+        return updated(day, today, style);
     }
-    output(&match filter {
-        Some(filter) => listing::render_filtered(&view, today, filter),
-        None => listing::render_list(&view, today),
-    })
+    output(&listing::render_styled(&view, today, filter, true, style))
 }
 
-fn run() -> Result<()> {
-    let args = Args::parse();
+fn run(args: Args, style: Style) -> Result<()> {
     let store = Store::new(config::resolve(args.data_dir.as_deref())?);
     let today = Local::now().date_naive();
     let (change, date) = match args.command {
@@ -272,7 +305,15 @@ fn run() -> Result<()> {
             status,
             copy,
         }) => {
-            return filtered_list(&store, period.as_deref(), &query, status, copy, today);
+            return filtered_list(
+                &store,
+                period.as_deref(),
+                &query,
+                status,
+                copy,
+                today,
+                style,
+            );
         }
         Some(Command::List {
             period,
@@ -288,6 +329,7 @@ fn run() -> Result<()> {
                     status,
                     copy,
                     today,
+                    style,
                 );
             }
             return show_or_repeat(
@@ -296,21 +338,26 @@ fn run() -> Result<()> {
                 None,
                 copy,
                 today,
+                style,
             );
         }
         Some(Command::NewDay) => {
             let created = store.new_day(today)?;
             output(&format!(
-                "{today}: {}\n\n",
+                "{}: {}\n\n",
+                style.heading(&today.to_string()),
                 if created {
                     "day started"
                 } else {
                     "day already started; no changes made"
                 }
             ))?;
-            return output(&listing::render(
+            return output(&listing::render_styled(
                 &listing::select(&store, None, today)?,
                 today,
+                None,
+                false,
+                style,
             ));
         }
         Some(Command::Doing { value, target }) => {
@@ -334,17 +381,15 @@ fn run() -> Result<()> {
                 item.parse().context("Item number is too large")?
             };
             if let Some(date) = target.date {
-                return updated_date(store.repeat_on_date(
-                    date,
-                    from,
-                    number,
-                    status.into(),
-                    None,
-                )?);
+                return updated_date(
+                    store.repeat_on_date(date, from, number, status.into(), None)?,
+                    style,
+                );
             }
             return updated(
                 store.repeat(from, number, status.into(), None, None)?,
                 today,
+                style,
             );
         }
         Some(Command::Edit { number, title }) => (Change::Edit(number, title), None),
@@ -356,14 +401,17 @@ fn run() -> Result<()> {
                 "--date adds titles or copies items; numbered moves still apply to the active day"
             );
         };
-        return updated_date(store.add_on_date(date, &title, status)?);
+        return updated_date(store.add_on_date(date, &title, status)?, style);
     }
-    updated(store.change(change, None)?, today)
+    updated(store.change(change, None)?, today, style)
 }
 
 fn main() {
-    if let Err(error) = run() {
-        eprintln!("krk: {error:#}");
+    let args = Args::parse();
+    let stdout_style = args.color.style(io::stdout().is_terminal());
+    let stderr_style = args.color.style(io::stderr().is_terminal());
+    if let Err(error) = run(args, stdout_style) {
+        eprintln!("{} {error:#}", stderr_style.error("krk:"));
         std::process::exit(1);
     }
 }

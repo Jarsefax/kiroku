@@ -1,4 +1,5 @@
 use crate::storage::{Day, Item, Status, Store, parse_date};
+use crate::style::Style;
 use anyhow::{Context, Result, bail, ensure};
 use chrono::{Datelike, Duration, NaiveDate};
 use std::fmt::Write;
@@ -199,30 +200,35 @@ pub fn letter_number(label: &str) -> Result<usize> {
 }
 
 pub fn render(view: &View, today: NaiveDate) -> String {
-    render_view(view, today, None, false)
+    render_styled(view, today, None, false, Style::default())
 }
 
 pub fn render_list(view: &View, today: NaiveDate) -> String {
-    render_view(view, today, None, true)
+    render_styled(view, today, None, true, Style::default())
 }
 
 pub fn render_filtered(view: &View, today: NaiveDate, filter: &Filter) -> String {
-    render_view(view, today, Some(filter), true)
+    render_styled(view, today, Some(filter), true, Style::default())
 }
 
-fn render_view(
+pub fn render_styled(
     view: &View,
     today: NaiveDate,
     filter: Option<&Filter>,
     result_numbers: bool,
+    style: Style,
 ) -> String {
     let mut output = String::new();
     if !view.notice.is_empty() {
-        let _ = writeln!(output, "{}\n", view.notice);
+        let _ = writeln!(output, "{}\n", style.muted(&view.notice));
     }
     if view.days.is_empty() {
         if view.notice.is_empty() {
-            output.push_str("No recorded days. Run `krk new-day` to start.\n");
+            let _ = writeln!(
+                output,
+                "{}",
+                style.muted("No recorded days. Run `krk new-day` to start.")
+            );
         }
         return output;
     }
@@ -245,7 +251,12 @@ fn render_view(
         } else {
             labels.push("history — letters are browsing labels");
         }
-        let _ = writeln!(output, "{} ({})", day.date, labels.join("; "));
+        let _ = writeln!(
+            output,
+            "{} {}",
+            style.heading(&day.date.to_string()),
+            style.muted(&format!("({})", labels.join("; ")))
+        );
         for status in Status::ALL {
             let items: Vec<_> = day
                 .numbered()
@@ -256,9 +267,9 @@ fn render_view(
             if filter.is_some() && items.is_empty() {
                 continue;
             }
-            let _ = writeln!(output, "  {}", status.label());
+            let _ = writeln!(output, "  {}", style.status(status.label(), status));
             if items.is_empty() {
-                output.push_str("    (empty)\n");
+                let _ = writeln!(output, "    {}", style.muted("(empty)"));
             }
             for (index, item) in items {
                 let label = if is_active {
@@ -272,19 +283,30 @@ fn render_view(
                 };
                 if result_numbers {
                     result_number += 1;
-                    let _ = writeln!(output, "    [{result_number}] {label}. {}", item.title);
+                    let _ = writeln!(
+                        output,
+                        "    {} {}. {}",
+                        style.heading(&format!("[{result_number}]")),
+                        style.status(&label, status),
+                        item.title
+                    );
                 } else {
-                    let _ = writeln!(output, "    {label}. {}", item.title);
+                    let _ = writeln!(
+                        output,
+                        "    {}. {}",
+                        style.status(&label, status),
+                        item.title
+                    );
                 }
             }
         }
         output.push('\n');
     }
     if result_numbers && result_number > 0 {
-        output.push_str("Append `--repeat N` to this command to copy result [N] into active To do. Results are recomputed on each run.\n");
+        let _ = writeln!(output, "{}", style.muted("Append `--repeat N` to this command to copy result [N] into active To do. Results are recomputed on each run."));
     }
     if filter.is_some() {
-        output.push_str("Copy a match: `krk repeat NUMBER` (active), or `krk repeat --from YYYY-MM-DD LETTER` (history).\n");
+        let _ = writeln!(output, "{}", style.muted("Copy a match: `krk repeat NUMBER` (active), or `krk repeat --from YYYY-MM-DD LETTER` (history)."));
     }
     output
 }
