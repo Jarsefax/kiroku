@@ -1180,3 +1180,157 @@ fn invalid_positions_leave_existing_logs_and_missing_days_unchanged() {
     );
     success(&missing, &["todo", "first", "--position", "1"]);
 }
+
+#[test]
+fn short_options_match_long_options_through_add_filter_copy_and_reorder() {
+    let short_logs = tempfile::tempdir().unwrap();
+    let long_logs = tempfile::tempdir().unwrap();
+    let workflows: &[(&[&str], &[&str])] = &[
+        (
+            &["todo", "meeting", "-d", "2025-01-02", "-p1"],
+            &["todo", "meeting", "--date", "2025-01-02", "--position", "1"],
+        ),
+        (
+            &["doing", "draft", "-d", "2025-01-02", "-p", "1"],
+            &["doing", "draft", "--date", "2025-01-02", "--position", "1"],
+        ),
+        (
+            &["done", "report", "-d", "2025-01-02", "-p", "1"],
+            &["done", "report", "--date", "2025-01-02", "--position", "1"],
+        ),
+        (
+            &[
+                "repeat",
+                "-f",
+                "2025-01-02",
+                "A",
+                "-s",
+                "done",
+                "-d",
+                "2025-01-01",
+                "-p",
+                "1",
+            ],
+            &[
+                "repeat",
+                "--from",
+                "2025-01-02",
+                "A",
+                "--status",
+                "done",
+                "--date",
+                "2025-01-01",
+                "--position",
+                "1",
+            ],
+        ),
+        (
+            &[
+                "list",
+                "-S",
+                "meeting",
+                "-s",
+                "done",
+                "-r",
+                "1",
+                "-d",
+                "2025-01-02",
+                "-p",
+                "1",
+            ],
+            &[
+                "list",
+                "--search",
+                "meeting",
+                "--status",
+                "done",
+                "--repeat",
+                "1",
+                "--date",
+                "2025-01-02",
+                "--position",
+                "1",
+            ],
+        ),
+        (
+            &[
+                "search",
+                "meeting",
+                "-s",
+                "done",
+                "-r",
+                "1",
+                "-d",
+                "2025-01-02",
+                "-p",
+                "1",
+            ],
+            &[
+                "search",
+                "meeting",
+                "--status",
+                "done",
+                "--repeat",
+                "1",
+                "--date",
+                "2025-01-02",
+                "--position",
+                "1",
+            ],
+        ),
+        (
+            &["reorder", "1", "down", "-n", "2"],
+            &["reorder", "1", "down", "--steps", "2"],
+        ),
+        (&["list", "-c", "always"], &["list", "--color", "always"]),
+        (&["-c", "never", "list"], &["--color", "never", "list"]),
+    ];
+    for (short, long) in workflows {
+        assert_eq!(
+            success(short_logs.path(), short),
+            success(long_logs.path(), long)
+        );
+        assert_eq!(
+            fs::read(short_logs.path().join("2025-01.md")).unwrap(),
+            fs::read(long_logs.path().join("2025-01.md")).unwrap(),
+        );
+    }
+    let before = fs::read(short_logs.path().join("2025-01.md")).unwrap();
+    for args in [
+        &["list", "-p", "1"][..],
+        &["search", "meeting", "-d", "2025-01-03"],
+        &["todo", "invalid", "-p", "0"],
+        &["reorder", "1", "up", "-n", "0"],
+    ] {
+        assert!(!run(short_logs.path(), args).status.success(), "{args:?}");
+        assert_eq!(
+            fs::read(short_logs.path().join("2025-01.md")).unwrap(),
+            before
+        );
+    }
+}
+
+#[test]
+fn short_global_directory_option_works_before_and_after_subcommands() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path().join("missing logs");
+    for args in [
+        vec!["-D", logs.to_str().unwrap(), "path"],
+        vec!["path", "-D", logs.to_str().unwrap()],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_krk"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap().trim(),
+            logs.to_str().unwrap()
+        );
+    }
+    assert!(!logs.exists());
+}

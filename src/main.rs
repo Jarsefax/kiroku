@@ -22,6 +22,7 @@ use std::{
 )]
 struct Args {
     #[arg(
+        short = 'D',
         long,
         global = true,
         value_name = "PATH",
@@ -29,6 +30,7 @@ struct Args {
     )]
     data_dir: Option<PathBuf>,
     #[arg(
+        short,
         long,
         global = true,
         value_enum,
@@ -66,18 +68,20 @@ impl ColorMode {
 #[derive(clap::Args)]
 struct AddTarget {
     #[arg(
+        short,
         long,
         value_name = "N",
         help = "Insert at this one-based position within the destination section (default: append)"
     )]
     position: Option<std::num::NonZeroUsize>,
-    #[arg(long, value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Add to this date instead of the active day")]
+    #[arg(short, long, value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Add to this date instead of the active day")]
     date: Option<NaiveDate>,
 }
 
 #[derive(clap::Args)]
 struct CopyResult {
     #[arg(
+        short,
         long,
         requires = "repeat",
         value_name = "N",
@@ -85,12 +89,13 @@ struct CopyResult {
     )]
     position: Option<std::num::NonZeroUsize>,
     #[arg(
+        short,
         long,
         value_name = "RESULT_NUMBER",
         help = "Copy the numbered result into To do; results are recomputed on this run"
     )]
     repeat: Option<usize>,
-    #[arg(long, requires = "repeat", value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Copy to this date instead of the active day (requires --repeat)")]
+    #[arg(short, long, requires = "repeat", value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Copy to this date instead of the active day (requires --repeat)")]
     date: Option<NaiveDate>,
 }
 
@@ -106,12 +111,14 @@ enum Command {
         )]
         period: Option<String>,
         #[arg(
+            short = 'S',
             long,
             value_name = "TEXT",
             help = "Match title text, ignoring case; searches all history unless PERIOD is given"
         )]
         search: Option<String>,
         #[arg(
+            short,
             long,
             value_enum,
             help = "Show only this status; searches all history unless PERIOD is given"
@@ -129,7 +136,7 @@ enum Command {
             help = "today | yesterday | week | month | YYYY-MM-DD | FROM..TO"
         )]
         period: Option<String>,
-        #[arg(long, value_enum)]
+        #[arg(short, long, value_enum)]
         status: Option<CliStatus>,
         #[command(flatten)]
         copy: CopyResult,
@@ -162,9 +169,10 @@ enum Command {
             help = "Active-day number, or a letter from a single-date listing with --from"
         )]
         item: String,
-        #[arg(long, value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Copy from another recorded day; letters are scoped to this date")]
+        #[arg(short, long, value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Copy from another recorded day; letters are scoped to this date")]
         from: Option<chrono::NaiveDate>,
         #[arg(
+            short,
             long,
             value_enum,
             default_value = "todo",
@@ -182,7 +190,7 @@ enum Command {
         #[arg(value_enum)]
         direction: CliDirection,
         /// Number of places to move (stops at the section boundary)
-        #[arg(long, default_value = "1", value_name = "N")]
+        #[arg(short = 'n', long, default_value = "1", value_name = "N")]
         steps: std::num::NonZeroUsize,
     },
     /// Remove an active-day item

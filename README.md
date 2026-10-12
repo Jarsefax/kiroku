@@ -56,6 +56,35 @@ nonempty, single-line text; Unicode and duplicate titles are supported.
 even when quoted; all other text is a new title. Invalid item numbers produce
 an error. Quote titles containing spaces.
 
+### Short options
+
+Every command option also has a short form. Global options work before or
+after the command; other options apply to the commands that support them.
+
+| Long option | Short option |
+| --- | --- |
+| `--position` | `-p` |
+| `--date` | `-d` |
+| `--repeat` | `-r` |
+| `--from` | `-f` |
+| `--status` | `-s` |
+| `--search` | `-S` |
+| `--steps` | `-n` |
+| `--data-dir` | `-D` |
+| `--color` | `-c` |
+| `--help` | `-h` |
+| `--version` | `-V` |
+
+Short options are case-sensitive. For example:
+
+```sh
+krk todo "urgent task" -p 1
+krk list -S "meeting" -s done
+krk repeat -f 2026-10-02 B -d 2026-10-05 -p 1
+krk reorder 3 up -n 2
+krk -D ~/other-folder -c never list
+```
+
 ### Command output colors
 
 Commands use color automatically when writing to a terminal: cyan dates and
