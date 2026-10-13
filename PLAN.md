@@ -44,13 +44,15 @@ meeting" or "monthly op meeting - september".
 - Until a new day is manually started, additions and status changes apply
   to the last started day, including after midnight or a gap of several days.
   This is the initial behavior and can be revisited after use.
-- CLI additions and copies can override the destination with `--date
+- CLI additions, moves, and copies can override the destination with `--date
   YYYY-MM-DD`. Create a missing destination with empty sections, without
   carryover, and insert dates chronologically. Older destinations leave the
   default active day unchanged; the active day is the latest recorded date
   on or before today. Future records are excluded until their dates arrive.
-  Numbered moves, edits, removals, and TUI changes still target the active
-  day. `new-day` always starts today.
+  Without an explicit destination, numbered moves and other edits target
+  the active day. Status commands can move a source date's letter using
+  `--from` together with `--date`. The TUI `m` prompt moves a selected item
+  from any day to a chosen date and section. `new-day` always starts today.
 - The first day starts empty.
 - Starting a subsequent day copies the previous recorded day's To do and
   Doing items into the new day's To do section.
@@ -87,8 +89,9 @@ These defaults were adopted for the first implementation.
   on or before today. Before starting
   today, the previous recorded day remains active and retains its numbers.
   After starting an empty today, the preceding day is historical and receives
-  letters. Editing commands accept only active-day numbers. Repeating may
-  copy a historical entry using its date and letter from a single-date
+  letters. Ordinary editing commands accept only active-day numbers.
+  Explicit dated moves and repeats may select a historical entry using its
+  date and letter from a single-date
   listing. Letters continue past Z as AA, AB, etc., and are unique across
   historical items in each CLI listing.
 - Selectors: `krk list today`, `krk list yesterday`,
@@ -110,13 +113,21 @@ These defaults were adopted for the first implementation.
 - `new-day` starts today only. It can insert today before existing future
   records and carries unfinished work only from an earlier eligible day.
   If today's record already exists, leave it unchanged.
-- `--date YYYY-MM-DD` targets title additions through `todo`, `doing`, and
-  `done`, and copies through `repeat` or `list`/`search --repeat`. Reject
-  numeric status moves with `--date`, and require `--repeat` for that option
+- `--date YYYY-MM-DD` targets title additions and item moves through `todo`,
+  `doing`, and `done`, and copies through `repeat` or `list`/`search --repeat`.
+  Numeric status moves select the active day's source item; `--from` selects
+  a date-scoped letter and requires `--date`. Require `--repeat` for `--date`
   on search/list. Copy source selection remains independent of destination.
   Validate the source before creating a destination and hold the directory
   lock through the entire update. Print targeted results without implying
   that historical items have editable active-day numbers.
+- Moving removes only the selected source entry and inserts its exact title
+  into the destination section, with optional `--position`. Create missing
+  destinations without carryover. Same-date moves can change section or
+  position; the same section without a position is a no-op. Within one month,
+  save once. Across months, prepare both files and backups before replacement,
+  then flush the destination before removing the source. Report partial
+  completion with instructions to inspect both files before retrying.
 - All status commands may move an active-day item from any status. Editing
   replaces its title; removal deletes the item. CLI removal is immediate;
   TUI removal has a y/n confirmation.
@@ -154,6 +165,11 @@ These defaults were adopted for the first implementation.
   Case-insensitive substring matching shows up to five titles; Up/Down or
   Tab/Shift-Tab selects one for Enter to reuse. Enter without a selection
   saves the typed text. Typing or deleting resets the suggestion selection.
+- TUI `m` opens a move prompt in browsing or search. Prefill today and the
+  source item's section; type YYYY-MM-DD, Tab/Shift-Tab cycles the section,
+  Enter moves and selects the item at its destination, and Esc cancels.
+  Source snapshots reject stale selections. Ordinary historical edits remain
+  restricted; explicit moves may select past or future sources and destinations.
 - Preserve untouched lines, previous day records, blank lines, and standalone
   HTML comments, including multiline comments. Retain the file's LF/CRLF
   newline convention. Reject malformed or unsupported content instead of
@@ -181,7 +197,7 @@ These defaults were adopted for the first implementation.
   failure reports that the update succeeded. Show full TUI errors in a popup.
 - Test partial writes, flush failures, replacement failures, backup retention,
   and cleanup failures through injectable IO operations.
-- TUI: arrows/jk select items, arrows/hl browse days, a adds, c copies,
+- TUI: arrows/jk select items, arrows/hl browse days, a adds, c copies, m moves,
   / searches, s/d/t change status, e edits, x removes, n starts today,
   r reloads, ? shows help, q quits.
   Enter saves a title prompt; Esc cancels; Backspace edits; Ctrl-U clears.

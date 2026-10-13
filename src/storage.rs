@@ -345,7 +345,7 @@ impl Document {
         Ok(())
     }
 
-    fn save(&self, close_previous_months: bool) -> Result<()> {
+    fn contents(&self) -> String {
         let mut contents = self.lines.concat();
         // Legacy files are format 1 after validation. Annotate only an actual
         // change, so reads and no-op edits never rewrite or back up a file.
@@ -355,6 +355,11 @@ impl Document {
                 self.newline, self.newline
             );
         }
+        contents
+    }
+
+    fn save(&self, close_previous_months: bool) -> Result<()> {
+        let contents = self.contents();
         if close_previous_months {
             crate::persistence::save(&self.path, self.original.as_deref(), &contents)
         } else {
@@ -710,6 +715,80 @@ impl Store {
         // Backfilling or planning a month does not close the active month.
         document.save(false)?;
         Ok(document.days[index].clone())
+    }
+
+    /// Move an item into an explicit date and section, removing its source entry.
+    /// Without `from`, numbers refer to the active day. A snapshot protects TUI
+    /// selections; destination contents are loaded while holding the directory lock.
+    pub fn move_on_date_at(
+        &self,
+        date: NaiveDate,
+        from: Option<NaiveDate>,
+        number: usize,
+        status: Status,
+        expected_source: Option<&Day>,
+        position: Option<usize>,
+    ) -> Result<Day> {
+        let _lock = self.lock()?;
+        let (mut source, source_index) = if let Some(from) = from {
+            let path = self.dir.join(format!("{}.md", from.format("%Y-%m")));
+            let document = Document::read_or_empty(path)?;
+            let index = document
+                .days
+                .iter()
+                .position(|day| day.date == from)
+                .with_context(|| format!("No recorded day for {from}"))?;
+            (document, index)
+        } else {
+            self.active_document_on(Local::now().date_naive())?
+                .context("No day has been started. Run `krk new-day` first")?
+        };
+        let source_day = &source.days[source_index];
+        if let Some(expected) = expected_source {
+            ensure!(
+                source_day.matches(expected),
+                "The source day changed outside this view. Reload it before moving"
+            );
+        }
+        let item = source_day
+            .numbered()
+            .get(number.wrapping_sub(1))
+            .copied()
+            .with_context(|| format!("No source item {number} on {}", source_day.date))?
+            .clone();
+        if date == source_day.date && status == item.status && position.is_none() {
+            return Ok(source_day.clone());
+        }
+        let destination_path = self.dir.join(format!("{}.md", date.format("%Y-%m")));
+        source.lines.remove(item.line);
+        source.reparse()?;
+        if source.path == destination_path {
+            let index = source.ensure_day(date)?;
+            source.insert_item(index, status, &item.title, position)?;
+            source.reparse()?;
+            source.save(false)?;
+            return Ok(source.days[index].clone());
+        }
+        let mut destination = Document::read_or_empty(destination_path)?;
+        let index = destination.ensure_day(date)?;
+        destination.insert_item(index, status, &item.title, position)?;
+        destination.reparse()?;
+        // Prepare both logs and backups before replacing either. Save and flush
+        // the destination first so an interrupted cross-month move cannot lose
+        // the item. A partial move may leave a duplicate, with recovery guidance.
+        crate::persistence::save_move(
+            crate::persistence::LogUpdate {
+                path: &destination.path,
+                original: destination.original.as_deref(),
+                content: &destination.contents(),
+            },
+            crate::persistence::LogUpdate {
+                path: &source.path,
+                original: source.original.as_deref(),
+                content: &source.contents(),
+            },
+        )?;
+        Ok(destination.days[index].clone())
     }
 
     /// Copy from a recorded source into an explicit destination date. Without

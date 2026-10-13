@@ -43,6 +43,8 @@ day. Use `krk new-day` to start subsequent days and carry unfinished work forwar
 | `krk done NUMBER` | Move an active-day item into Done |
 | `krk done "title"` | Add an item directly to Done |
 | `krk todo NUMBER` | Move an active-day item back into To do |
+| `krk todo\|doing\|done NUMBER --date YYYY-MM-DD` | Move an active-day item to that date and section |
+| `krk todo\|doing\|done LETTER --from YYYY-MM-DD --date YYYY-MM-DD` | Move an item from a specific source day to that date and section |
 | `krk repeat NUMBER` | Copy an active-day item into To do, keeping the original |
 | `krk repeat --from YYYY-MM-DD LETTER` | Copy a historical item into the active day's To do |
 | `krk move NUMBER up\|down [--steps N]` | Move an active-day item within its section (default: one place) |
@@ -124,14 +126,16 @@ In auto mode, a nonempty `NO_COLOR` environment variable or `TERM=dumb`
 disables colors. Explicit `--color always` overrides these settings.
 This option applies to command output; the interactive TUI keeps its own styling.
 
-### Adding to a specific date
+### Adding or moving to a specific date
 
-Use `--date YYYY-MM-DD` on a command that adds a title or copies an item:
+Use `--date YYYY-MM-DD` on a command that adds a title, moves an item, or copies it:
 
 ```sh
 krk todo "weekly meeting" --date 2026-10-06
 krk doing "investigate issue" --date 2026-10-06
 krk done "finished yesterday" --date 2026-10-05
+krk doing 3 --date 2026-10-05
+krk done B --from 2026-10-02 --date 2026-10-05 --position 1
 krk repeat 3 --date 2026-10-05
 krk repeat --from 2026-10-02 B --date 2026-10-05 --status doing
 krk search "meeting" --repeat 2 --date 2026-10-05
@@ -139,11 +143,11 @@ krk list 2026-10-02 --repeat 1 --date 2026-10-05
 ```
 
 The date selects the destination for this command. If it has no record yet,
-Kiroku creates that day with empty sections and adds the item, without
+Kiroku creates that day with empty sections and inserts the item, without
 carrying over unfinished work or creating intervening days. Dates remain
 chronological in the appropriate monthly file. You can add to past or future
-dates, including when no day has been started. Copies still need a recorded
-source. Existing contents, comments, and line endings are preserved, with
+dates, including when no day has been started. Moves and copies still need
+a recorded source. Existing comments and line endings are preserved, with
 the usual backups and storage-version checks.
 
 Without `--date`, commands use the latest recorded day **on or before today**.
@@ -151,20 +155,38 @@ Future records are excluded from the active-day selection until their dates
 arrive. Adding to an older or future date leaves the current default
 destination unchanged. If there is no active day, adding a title without
 `--date` creates today, including when only future records exist. Commands
-that move or copy existing items still require an active day. `new-day` can start today even
-when future records already exist, and carries items only from an earlier
+that use active-day item numbers still require an active day. An explicit
+`--from` can select a recorded source even when only future days exist.
+`new-day` can start today even when future records already exist, and carries
+items only from an earlier
 eligible day. A day already filled using `--date` is left unchanged.
 
-`--date` is supported by `todo`, `doing`, and `done` only when adding a title;
-numeric arguments still mean active-day moves and are rejected with this
-option. It also works with `repeat`, and with `list`/`search` when `--repeat`
-is present. On `repeat`, `--from` selects the source and `--date` selects the
-destination; without `--from`, the source number refers to the active day.
+On `todo`, `doing`, and `done`, a numeric argument with `--date` moves that
+active-day item into the chosen date's section and removes its source entry.
+Use `--from YYYY-MM-DD LETTER` to select an item from a specific source day;
+letters are scoped to that date, with A as the first item, B as the second,
+and AA after Z. On status commands, `--from` requires `--date` and a letter.
+Omit `--position` to append, or choose a one-based position in the destination
+section. Moving to the same date changes the section without creating a copy;
+choosing the same date and section without `--position` makes no changes.
+
+`--date` also works with `repeat`, and with `list`/`search` when `--repeat`
+is present. On moves and repeats, `--from` selects the source and `--date`
+selects the destination; without `--from`, the source number refers to the
+active day.
 An explicit destination can precede or equal the source date. Date-targeted
 commands print the updated destination with plain bullets. Use `krk list`
 to get current item numbers or copy-result numbers. `edit` and `remove` continue
-to act on the active day. The TUI also excludes future dates from the active
-day; future records can be browsed and copied but cannot be edited there.
+to act on the active day. Creating a later destination on or before today
+makes it the active day under the usual selection rule. The TUI also excludes
+future dates from the active day; its `m` prompt can explicitly move items
+from any recorded day to a chosen date and section.
+
+Moves within one monthly file use one atomic save. Cross-month moves prepare
+both logs and their backups, then save and flush the destination before
+removing the source entry. An interrupted cross-month move can leave the
+item in both places. If a save reports partial completion, inspect both dates
+before retrying; remove any unwanted duplicate after checking the result.
 
 ### Reusing a title
 
@@ -334,6 +356,7 @@ in To do. The prompt displays the chosen position and defaults to appending.
 | Home/End or `g`/`G` | Select the first/last item |
 | `a` | Add a todo |
 | `c` | Copy the selected item from any day into the active day's To do |
+| `m` | Move the selected item to a chosen date and section |
 | `/` | Search titles across all recorded days |
 | `s`, `d`, `t` | Move to Doing, Done, or To do |
 | `e` | Edit the selected title |
@@ -354,6 +377,14 @@ stop at the first or last item in that section.
 Copying with `c` preserves the source, jumps to the active day, and selects
 the new entry. Press `s` to start working on it immediately.
 
+Press `m` to move the selected item, including from a historical or future
+day. The prompt starts with today's date and the item's current section.
+Type the destination as `YYYY-MM-DD` (Ctrl-U clears the date), and use
+Tab/Shift-Tab to choose To do, Doing, or Done. Enter moves the item and selects
+it on the destination day; Esc cancels. A missing destination starts empty,
+without carryover. The source entry is removed. The move appends to the
+chosen section and rejects a source selection changed by an external edit.
+
 Press `/`, enter search text, and press Enter to list matches across all
 days, newest day first. An empty query lists all items. Results show the
 source date, original number/letter, status, and title. Navigate with
@@ -361,10 +392,10 @@ Up/Down or `j`/`k`; Home/End or `g`/`G` selects the first/last match.
 Press `f` to cycle the status filter through all, Done, To do, and Doing.
 Press `/` again to refine the query while retaining the status filter.
 Enter opens the selected item's source day, `c` copies it into active To do,
-and Esc leaves the results. To copy into today, press `n` first; this starts
+`m` opens the move prompt, and Esc leaves the results. To copy into today, press `n` first; this starts
 today while retaining the selected search result. `r` refreshes results
 after external edits. Opening an active-day result also lets you use the
-usual editing and status shortcuts; historical entries remain read-only.
+usual editing and status shortcuts; use `m` for explicit moves from other days.
 
 In a title prompt, type or paste a title, use Backspace to delete a character
 or Ctrl-U to clear, Enter to save, and Esc to cancel. The add prompt shows up
@@ -373,8 +404,9 @@ appears once, with its most recent completion date (or last use if never
 completed). Matching ignores case and searches anywhere in the title. Use
 Up/Down or Tab/Shift-Tab to select a suggestion, then Enter to reuse its exact
 text. With no suggestion selected, Enter saves the text you typed. Typing or
-deleting clears the suggestion selection. The app edits only the active day;
-historical days can be edited directly in their Markdown files. It redraws
+deleting clears the suggestion selection. Renaming, removing, reordering,
+and the `s`/`d`/`t` status shortcuts apply only to the active day. Use `m` to
+explicitly move other days' items, or edit their Markdown files directly. It redraws
 on input and resize rather than running an idle animation loop.
 
 ## Files and configuration
@@ -589,11 +621,12 @@ Tests cover rollover across weekends/months, numbered duplicate titles,
 date selection and list fallback, manual comments and CRLF preservation,
 legacy and versioned logs, unsupported-format protection, malformed-file
 protection, stale selections, concurrent writes, configuration,
-date-targeted additions and copies with chronological insertion,
+date-targeted additions, moves, and copies with chronological insertion,
 CLI workflows, search/filter references and copying results into today,
 numbered search/list results with `--repeat`, repeating items across
 days/months, title suggestions, and TUI
 keyboard/render behavior. Save tests inject partial
 writes, file/directory flush failures, replacement failures, and backup
 cleanup failures, and verify the original or applied update survives as
-appropriate.
+appropriate. Cross-month move tests cover failures while preparing either
+log, partial completion, and concurrent moves without lost items.

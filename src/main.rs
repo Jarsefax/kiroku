@@ -74,8 +74,16 @@ struct AddTarget {
         help = "Insert at this one-based position within the destination section (default: append)"
     )]
     position: Option<std::num::NonZeroUsize>,
-    #[arg(short, long, value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Add to this date instead of the active day")]
+    #[arg(short, long, value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Use this destination date instead of the active day")]
     date: Option<NaiveDate>,
+}
+
+#[derive(clap::Args)]
+struct StatusTarget {
+    #[command(flatten)]
+    target: AddTarget,
+    #[arg(short, long, requires = "date", value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Move a date-scoped letter from this recorded day (requires --date)")]
+    from: Option<NaiveDate>,
 }
 
 #[derive(clap::Args)]
@@ -144,29 +152,29 @@ enum Command {
         #[command(flatten)]
         copy: CopyResult,
     },
-    /// Add a title, or move a numbered active-day item into Doing
+    /// Add a title, or move an item into Doing, optionally on another date
     #[command(visible_alias = "do")]
     Doing {
-        #[arg(value_name = "TITLE_OR_NUMBER")]
+        #[arg(value_name = "TITLE_OR_REFERENCE")]
         value: String,
         #[command(flatten)]
-        target: AddTarget,
+        target: StatusTarget,
     },
-    /// Add a title, or move a numbered active-day item into Done
+    /// Add a title, or move an item into Done, optionally on another date
     #[command(visible_alias = "d")]
     Done {
-        #[arg(value_name = "TITLE_OR_NUMBER")]
+        #[arg(value_name = "TITLE_OR_REFERENCE")]
         value: String,
         #[command(flatten)]
-        target: AddTarget,
+        target: StatusTarget,
     },
-    /// Add a title, or move a numbered active-day item back into To do
+    /// Add a title, or move an item into To do, optionally on another date
     #[command(visible_alias = "t")]
     Todo {
-        #[arg(value_name = "TITLE_OR_NUMBER")]
+        #[arg(value_name = "TITLE_OR_REFERENCE")]
         value: String,
         #[command(flatten)]
-        target: AddTarget,
+        target: StatusTarget,
     },
     /// Copy an item into the active day, preserving its original entry
     #[command(visible_alias = "r")]
@@ -244,9 +252,14 @@ fn status_change(
     value: String,
     status: Status,
     position: Option<std::num::NonZeroUsize>,
+    from: Option<NaiveDate>,
 ) -> Result<Change> {
-    if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
-        let number = value.parse().context("Item number is too large")?;
+    if from.is_some() || (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())) {
+        let number = if from.is_some() {
+            listing::letter_number(&value)?
+        } else {
+            value.parse().context("Item number is too large")?
+        };
         Ok(match position {
             Some(position) => Change::MoveAt(number, status, position.get()),
             None => Change::Move(number, status),
@@ -274,7 +287,7 @@ fn updated(day: Day, today: chrono::NaiveDate, style: Style) -> Result<()> {
 }
 
 fn updated_date(day: Day, style: Style) -> Result<()> {
-    // A targeted historical addition must not advertise active-day numbers.
+    // A targeted update must not advertise historical items as active-day numbers.
     let mut text = format!("{}\n\n", style.heading(&format!("Updated {}.", day.date)));
     for status in Status::ALL {
         text.push_str(&format!("  {}\n", style.status(status.label(), status)));
@@ -359,7 +372,7 @@ fn show_or_repeat(
 fn run(args: Args, style: Style) -> Result<()> {
     let store = Store::new(config::resolve(args.data_dir.as_deref())?);
     let today = Local::now().date_naive();
-    let (change, date) = match args.command {
+    let (change, date, from) = match args.command {
         None => return tui::run(store),
         Some(Command::Path) => return output(&format!("{}\n", store.dir.display())),
         Some(Command::Search {
@@ -424,16 +437,19 @@ fn run(args: Args, style: Style) -> Result<()> {
             ));
         }
         Some(Command::Doing { value, target }) => (
-            status_change(value, Status::Doing, target.position)?,
-            target.date,
+            status_change(value, Status::Doing, target.target.position, target.from)?,
+            target.target.date,
+            target.from,
         ),
         Some(Command::Done { value, target }) => (
-            status_change(value, Status::Done, target.position)?,
-            target.date,
+            status_change(value, Status::Done, target.target.position, target.from)?,
+            target.target.date,
+            target.from,
         ),
         Some(Command::Todo { value, target }) => (
-            status_change(value, Status::Todo, target.position)?,
-            target.date,
+            status_change(value, Status::Todo, target.target.position, target.from)?,
+            target.target.date,
+            target.from,
         ),
         Some(Command::Repeat {
             item,
@@ -476,7 +492,7 @@ fn run(args: Args, style: Style) -> Result<()> {
                 style,
             );
         }
-        Some(Command::Edit { number, title }) => (Change::Edit(number, title), None),
+        Some(Command::Edit { number, title }) => (Change::Edit(number, title), None, None),
         Some(Command::Move {
             number,
             direction,
@@ -491,18 +507,25 @@ fn run(args: Args, style: Style) -> Result<()> {
                 steps.get(),
             ),
             None,
+            None,
         ),
-        Some(Command::Remove { number }) => (Change::Remove(number), None),
+        Some(Command::Remove { number }) => (Change::Remove(number), None, None),
     };
     if let Some(date) = date {
-        let (title, status, position) = match change {
-            Change::Add(title, status) => (title, status, None),
-            Change::AddAt(title, status, position) => (title, status, Some(position)),
-            _ => anyhow::bail!(
-                "--date adds titles or copies items; numbered moves still apply to the active day"
-            ),
+        let day = match change {
+            Change::Add(title, status) => store.add_on_date(date, &title, status)?,
+            Change::AddAt(title, status, position) => {
+                store.add_on_date_at(date, &title, status, Some(position))?
+            }
+            Change::Move(number, status) => {
+                store.move_on_date_at(date, from, number, status, None, None)?
+            }
+            Change::MoveAt(number, status, position) => {
+                store.move_on_date_at(date, from, number, status, None, Some(position))?
+            }
+            _ => unreachable!(),
         };
-        return updated_date(store.add_on_date_at(date, &title, status, position)?, style);
+        return updated_date(day, style);
     }
     updated(store.change(change, None)?, today, style)
 }

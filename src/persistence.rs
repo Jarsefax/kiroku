@@ -175,8 +175,25 @@ fn save_with_cleanup(
         return check_original(path, original);
     }
     let parent = path.parent().context("Missing log directory")?;
+    let temporary = prepare(ops, path, original, content)?;
+    replace(ops, path, original, temporary)?;
+
+    ops.flush_directory(Stage::FlushLogDirectory, parent).with_context(|| format!(
+        "Update is already visible in {}, but the final directory flush failed; persistence after a crash is uncertain. Do not blindly repeat the command: inspect the file or run `krk list` first. Previous contents are in backups/ when the file already existed",
+        path.display()
+    ))?;
+    cleanup(ops, path, close_previous_months)
+}
+
+fn prepare(
+    ops: &impl Operations,
+    path: &Path,
+    original: Option<&str>,
+    content: &str,
+) -> Result<NamedTempFile> {
+    let parent = path.parent().context("Missing log directory")?;
     // All failures in this block happen before replacement of the live log.
-    let preparation = || -> Result<()> {
+    let preparation = || -> Result<NamedTempFile> {
         check_original(path, original)?;
         let permissions = if original.is_some() {
             Some(fs::metadata(path)?.permissions())
@@ -225,25 +242,38 @@ fn save_with_cleanup(
                 .context("Cannot flush backup directory's parent")?;
         }
 
-        // Backup preparation takes time; recheck for external edits immediately
-        // before committing. Editors still need to avoid simultaneous saves.
-        check_original(path, original)?;
-        ops.replace(Stage::ReplaceLog, temporary, path)
-            .context("Cannot replace log")?;
-        Ok(())
+        Ok(temporary)
     };
     preparation().with_context(|| {
         format!(
             "Save aborted before replacement; Kiroku did not change {}",
             path.display()
         )
-    })?;
+    })
+}
 
-    ops.flush_directory(Stage::FlushLogDirectory, parent).with_context(|| format!(
-        "Update is already visible in {}, but the final directory flush failed; persistence after a crash is uncertain. Do not blindly repeat the command: inspect the file or run `krk list` first. Previous contents are in backups/ when the file already existed",
-        path.display()
-    ))?;
+fn replace(
+    ops: &impl Operations,
+    path: &Path,
+    original: Option<&str>,
+    temporary: NamedTempFile,
+) -> Result<()> {
+    // Backup preparation takes time; recheck immediately before committing.
+    let commit = || -> Result<()> {
+        check_original(path, original)?;
+        ops.replace(Stage::ReplaceLog, temporary, path)
+            .context("Cannot replace log")
+    };
+    commit().with_context(|| {
+        format!(
+            "Save aborted before replacement; Kiroku did not change {}",
+            path.display()
+        )
+    })
+}
 
+fn cleanup(ops: &impl Operations, path: &Path, close_previous_months: bool) -> Result<()> {
+    let parent = path.parent().context("Missing log directory")?;
     // Only prune after a successful, flushed log replacement. A failed save
     // may retain extra backups rather than risking deletion of recovery data.
     let cleanup = || -> Result<()> {
@@ -278,28 +308,81 @@ fn save_with_cleanup(
     Ok(())
 }
 
+pub(crate) struct LogUpdate<'a> {
+    pub path: &'a Path,
+    pub original: Option<&'a str>,
+    pub content: &'a str,
+}
+
+pub(crate) fn save_move(destination: LogUpdate<'_>, source: LogUpdate<'_>) -> Result<()> {
+    save_move_with(&Disk, destination, source)
+}
+
+fn save_move_with(
+    ops: &impl Operations,
+    destination: LogUpdate<'_>,
+    source: LogUpdate<'_>,
+) -> Result<()> {
+    let parent = destination.path.parent().context("Missing log directory")?;
+    let destination_temp = prepare(
+        ops,
+        destination.path,
+        destination.original,
+        destination.content,
+    )?;
+    let source_temp = prepare(ops, source.path, source.original, source.content)?;
+    check_original(source.path, source.original)?;
+    replace(
+        ops,
+        destination.path,
+        destination.original,
+        destination_temp,
+    )?;
+    let complete = || -> Result<()> {
+        // The destination must be durable before the source entry is removed.
+        ops.flush_directory(Stage::FlushLogDirectory, parent)
+            .context("Cannot flush destination log directory")?;
+        replace(ops, source.path, source.original, source_temp)?;
+        ops.flush_directory(Stage::FlushLogDirectory, parent)
+            .context("Cannot flush source log directory")?;
+        Ok(())
+    };
+    complete().with_context(|| format!(
+        "Cross-month move may be partially applied: the destination {} was updated, and the source {} may still contain the item. Inspect both files before retrying; a duplicate may need removing. Persistence after a failed directory flush is uncertain. Previous contents of existing files are in backups/",
+        destination.path.display(), source.path.display()
+    ))?;
+    // Do not prune either month's backups until both logs have been flushed.
+    cleanup(ops, destination.path, false)?;
+    cleanup(ops, source.path, false)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
 
     struct Fault {
         stage: Stage,
         seen: RefCell<Vec<Stage>>,
+        fail_on: usize,
+        calls: Cell<usize>,
     }
     impl Fault {
         fn check(&self, stage: Stage) -> io::Result<()> {
             self.seen.borrow_mut().push(stage);
             if self.stage == stage {
-                Err(io::Error::other(format!("injected {stage:?} failure")))
-            } else {
-                Ok(())
+                self.calls.set(self.calls.get() + 1);
+                if self.calls.get() == self.fail_on {
+                    return Err(io::Error::other(format!("injected {stage:?} failure")));
+                }
             }
+            Ok(())
         }
     }
     impl Operations for Fault {
         fn write(&self, stage: Stage, file: &mut NamedTempFile, data: &[u8]) -> io::Result<()> {
-            if self.stage == stage {
+            if self.stage == stage && self.calls.get() + 1 == self.fail_on {
                 // Simulate a full disk after part of the file was written.
                 file.write_all(&data[..data.len() / 2])?;
             }
@@ -325,10 +408,147 @@ mod tests {
     }
 
     fn fault(stage: Stage) -> Fault {
+        fault_on(stage, 1)
+    }
+
+    fn fault_on(stage: Stage, fail_on: usize) -> Fault {
         Fault {
             stage,
             seen: RefCell::new(vec![]),
+            fail_on,
+            calls: Cell::new(0),
         }
+    }
+
+    #[test]
+    fn move_preparation_failures_leave_both_logs_unchanged() {
+        for stage in [
+            Stage::WriteLog,
+            Stage::FlushLog,
+            Stage::WriteBackup,
+            Stage::FlushBackup,
+            Stage::ReplaceBackup,
+            Stage::FlushBackupDirectory,
+            Stage::FlushBackupParent,
+        ] {
+            for fail_on in [1, 2] {
+                let temp = tempfile::tempdir().unwrap();
+                let source = temp.path().join("2026-09.md");
+                let destination = temp.path().join("2026-10.md");
+                fs::write(&source, "source item\n").unwrap();
+                fs::write(&destination, "existing destination\n").unwrap();
+                let ops = fault_on(stage, fail_on);
+                let error = save_move_with(
+                    &ops,
+                    LogUpdate {
+                        path: &destination,
+                        original: Some("existing destination\n"),
+                        content: "existing destination\nsource item\n",
+                    },
+                    LogUpdate {
+                        path: &source,
+                        original: Some("source item\n"),
+                        content: "",
+                    },
+                )
+                .unwrap_err();
+                assert!(format!("{error:#}").contains("Save aborted before replacement"));
+                assert_eq!(
+                    fs::read_to_string(&source).unwrap(),
+                    "source item\n",
+                    "{stage:?} #{fail_on}"
+                );
+                assert_eq!(
+                    fs::read_to_string(&destination).unwrap(),
+                    "existing destination\n",
+                    "{stage:?} #{fail_on}"
+                );
+                assert!(!ops.seen.borrow().contains(&Stage::ReplaceLog));
+            }
+        }
+    }
+
+    #[test]
+    fn interrupted_moves_keep_the_item_and_report_partial_application() {
+        for (stage, fail_on, destination_saved, source_saved) in [
+            (Stage::ReplaceLog, 1, false, false),
+            (Stage::ReplaceLog, 2, true, false),
+            (Stage::FlushLogDirectory, 1, true, false),
+            (Stage::FlushLogDirectory, 2, true, true),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let source = temp.path().join("2026-09.md");
+            let destination = temp.path().join("2026-10.md");
+            fs::write(&source, "source item\n").unwrap();
+            let ops = fault_on(stage, fail_on);
+            let error = save_move_with(
+                &ops,
+                LogUpdate {
+                    path: &destination,
+                    original: None,
+                    content: "source item\n",
+                },
+                LogUpdate {
+                    path: &source,
+                    original: Some("source item\n"),
+                    content: "",
+                },
+            )
+            .unwrap_err();
+            let error = format!("{error:#}");
+            assert_eq!(
+                error.contains("Cross-month move may be partially applied"),
+                destination_saved,
+                "{error}"
+            );
+            assert_eq!(destination.exists(), destination_saved);
+            if destination_saved {
+                assert_eq!(fs::read_to_string(&destination).unwrap(), "source item\n");
+                assert!(error.contains("Inspect both files before retrying"));
+            }
+            assert_eq!(
+                fs::read_to_string(&source).unwrap(),
+                if source_saved { "" } else { "source item\n" }
+            );
+            assert_eq!(
+                fs::read_to_string(temp.path().join("backups/2026-09.md.000001.bak")).unwrap(),
+                "source item\n"
+            );
+        }
+    }
+
+    #[test]
+    fn move_cleanup_failure_happens_after_both_files_are_saved() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("2026-09.md");
+        let destination = temp.path().join("2026-10.md");
+        fs::write(&source, "source item\n").unwrap();
+        let backups = temp.path().join("backups");
+        fs::create_dir(&backups).unwrap();
+        for n in 1..=5 {
+            fs::write(backups.join(format!("2026-09.md.{n:06}.bak")), "older").unwrap();
+        }
+        let error = save_move_with(
+            &fault(Stage::PruneBackup),
+            LogUpdate {
+                path: &destination,
+                original: None,
+                content: "source item\n",
+            },
+            LogUpdate {
+                path: &source,
+                original: Some("source item\n"),
+                content: "",
+            },
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("Update was saved successfully"));
+        assert_eq!(fs::read_to_string(source).unwrap(), "");
+        assert_eq!(fs::read_to_string(destination).unwrap(), "source item\n");
+        assert_eq!(
+            fs::read_to_string(backups.join("2026-09.md.000006.bak")).unwrap(),
+            "source item\n"
+        );
     }
 
     #[test]

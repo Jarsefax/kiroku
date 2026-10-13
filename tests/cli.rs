@@ -317,7 +317,7 @@ fn future_only_cli_starts_today_when_adding_a_title() {
 }
 
 #[test]
-fn invalid_date_options_and_numbered_moves_leave_files_unchanged() {
+fn invalid_date_options_and_references_leave_files_unchanged() {
     let temp = tempfile::tempdir().unwrap();
     let logs = temp.path();
     success(logs, &["todo", "source", "--date", "2026-10-06"]);
@@ -327,9 +327,12 @@ fn invalid_date_options_and_numbered_moves_leave_files_unchanged() {
         &["todo", "new", "--date", "2026-02-30"][..],
         &["doing", "new", "--date", "2026-1-2"],
         &["done", "new", "--date", "today"],
-        &["todo", "1", "--date", "2026-09-30"],
-        &["doing", "1", "--date", "2026-09-30"],
-        &["done", "1", "--date", "2026-09-30"],
+        &["todo", "0", "--date", "2026-09-30"],
+        &["doing", "2", "--date", "2026-09-30"],
+        &["done", "1", "--date", "2026-09-30", "--position", "2"],
+        &["todo", "A", "--from", "2026-10-06"],
+        &["doing", "1", "--from", "2026-10-06", "--date", "2026-09-30"],
+        &["done", "B", "--from", "2026-10-06", "--date", "2026-09-30"],
         &["edit", "1", "new", "--date", "2026-09-30"],
         &["remove", "1", "--date", "2026-09-30"],
         &["new-day", "--date", "2026-09-30"],
@@ -345,11 +348,76 @@ fn invalid_date_options_and_numbered_moves_leave_files_unchanged() {
         assert!(!logs.join("2026-09.md").exists());
         assert!(!logs.join("backups").exists());
     }
-    let error = run(logs, &["todo", "1", "--date", "2026-09-30"]);
-    assert!(
-        String::from_utf8_lossy(&error.stderr)
-            .contains("numbered moves still apply to the active day")
+}
+
+#[test]
+fn status_commands_move_items_to_dates_sections_and_positions() {
+    for (command, status) in [
+        ("todo", Status::Todo),
+        ("doing", Status::Doing),
+        ("done", Status::Done),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let logs = temp.path();
+        success(logs, &["todo", "duplicate 日本語", "--date", "2026-10-06"]);
+        success(logs, &["done", "duplicate 日本語", "--date", "2026-10-06"]);
+        success(logs, &[command, "existing", "--date", "2026-09-30"]);
+        let output = success(
+            logs,
+            &[command, "2", "--date", "2026-09-30", "--position", "1"],
+        );
+        assert!(output.contains("Updated 2026-09-30."));
+        assert!(output.contains("- duplicate 日本語"));
+        assert!(!output.contains("[1]"));
+        let store = Store::new(logs.to_path_buf());
+        let days = store.days(None).unwrap();
+        assert_eq!(days[1].items.len(), 1);
+        assert_eq!(days[1].items[0].status, Status::Todo);
+        assert_eq!(days[0].items.len(), 2);
+        assert_eq!(days[0].items[0].title, "duplicate 日本語");
+        assert_eq!(days[0].items[0].status, status);
+        assert_eq!(days[0].items[1].title, "existing");
+    }
+}
+
+#[test]
+fn dated_moves_accept_source_letters_and_short_commands_and_options() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    success(logs, &["todo", "first", "--date", "2026-09-30"]);
+    success(logs, &["doing", "second", "--date", "2026-09-30"]);
+    success(logs, &["todo", "active", "--date", "2026-10-06"]);
+    success(
+        logs,
+        &["do", "B", "-f", "2026-09-30", "-d", "2026-10-07", "-p", "1"],
     );
+    let store = Store::new(logs.to_path_buf());
+    let source = store
+        .days(Some((
+            parse_date("2026-09-30").unwrap(),
+            parse_date("2026-09-30").unwrap(),
+        )))
+        .unwrap();
+    assert_eq!(source[0].items.len(), 1);
+    assert_eq!(source[0].items[0].title, "first");
+    let destination = store
+        .days(Some((
+            parse_date("2026-10-07").unwrap(),
+            parse_date("2026-10-07").unwrap(),
+        )))
+        .unwrap();
+    assert_eq!(destination[0].items[0].title, "second");
+    assert_eq!(destination[0].items[0].status, Status::Doing);
+    // Moving to the same day changes the section without duplicating the item.
+    success(logs, &["d", "A", "-f", "2026-10-07", "-d", "2026-10-07"]);
+    let destination = store
+        .days(Some((
+            parse_date("2026-10-07").unwrap(),
+            parse_date("2026-10-07").unwrap(),
+        )))
+        .unwrap();
+    assert_eq!(destination[0].items.len(), 1);
+    assert_eq!(destination[0].items[0].status, Status::Done);
 }
 
 #[test]
@@ -833,7 +901,7 @@ fn todo_adds_text_and_moves_references_from_doing_and_done() {
             .lines()
             .any(|line| line.trim_start().starts_with("add "))
     );
-    assert!(success(logs, &["todo", "--help"]).contains("TITLE_OR_NUMBER"));
+    assert!(success(logs, &["todo", "--help"]).contains("TITLE_OR_REFERENCE"));
 }
 
 #[test]
@@ -887,7 +955,7 @@ fn every_status_command_adds_titles_and_moves_existing_items() {
         }
         assert!(!run(logs, &[command]).status.success());
         assert_eq!(fs::read(&path).unwrap(), before);
-        assert!(success(logs, &[command, "--help"]).contains("TITLE_OR_NUMBER"));
+        assert!(success(logs, &[command, "--help"]).contains("TITLE_OR_REFERENCE"));
     }
 }
 

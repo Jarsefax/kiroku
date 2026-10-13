@@ -7,7 +7,7 @@ use crossterm::{
 };
 use kiroku::{
     listing,
-    storage::{Change, Day, Direction, Status, Store},
+    storage::{Change, Day, Direction, Status, Store, parse_date},
 };
 use ratatui::{
     Terminal,
@@ -35,6 +35,11 @@ enum Prompt {
     Search,
     Edit(usize),
     Remove(usize),
+    Move {
+        source: Day,
+        number: usize,
+        status: Status,
+    },
 }
 
 struct Search {
@@ -206,6 +211,10 @@ impl App {
                 let (day, item) = search.results[search.selected];
                 self.repeat_item(day, item + 1)?;
             }
+            KeyCode::Char('m') if length > 0 => {
+                let (day, item) = search.results[search.selected];
+                self.move_prompt(day, item + 1);
+            }
             KeyCode::Enter if length > 0 => {
                 let (day, item) = search.results[search.selected];
                 self.current = day;
@@ -228,7 +237,7 @@ impl App {
             matches!(change, Change::Add(..) | Change::AddAt(..)) && self.active().is_none();
         ensure!(
             self.editable() || first_add,
-            "Only the active day is editable in the TUI; edit other dates in their Markdown files directly"
+            "This edit requires the active day; use m to move an item from another date"
         );
         let expected = if first_add { None } else { self.day().cloned() };
         self.store.change(change, expected.as_ref())?;
@@ -293,6 +302,49 @@ impl App {
         Ok(())
     }
 
+    fn move_prompt(&mut self, day_index: usize, number: usize) {
+        let source = self.days[day_index].clone();
+        let status = source.numbered()[number - 1].status;
+        self.input = Local::now().date_naive().to_string();
+        self.prompt = Some(Prompt::Move {
+            source,
+            number,
+            status,
+        });
+    }
+
+    fn move_item(&mut self, source: &Day, number: usize, status: Status) -> Result<()> {
+        let date = parse_date(&self.input)?;
+        let unchanged = date == source.date && source.numbered()[number - 1].status == status;
+        let destination = self.store.move_on_date_at(
+            date,
+            Some(source.date),
+            number,
+            status,
+            Some(source),
+            None,
+        )?;
+        let selected = if unchanged {
+            number - 1
+        } else {
+            destination
+                .numbered()
+                .iter()
+                .rposition(|item| item.status == status)
+                .unwrap()
+        };
+        self.search = None;
+        self.reload()?;
+        self.current = self.days.iter().position(|day| day.date == date).unwrap();
+        self.selected = selected;
+        self.list_state = ListState::default();
+        self.message = format!(
+            "Moved to {date}, {}. Item numbers may have changed.",
+            status.label()
+        );
+        Ok(())
+    }
+
     fn key(&mut self, key: KeyEvent) -> Result<bool> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Ok(true);
@@ -350,6 +402,16 @@ impl App {
                         self.input.clear();
                         self.suggestion = None;
                     }
+                    KeyCode::Tab | KeyCode::BackTab if matches!(prompt, Prompt::Move { .. }) => {
+                        if let Some(Prompt::Move { status, .. }) = &mut self.prompt {
+                            let index = Status::ALL
+                                .iter()
+                                .position(|entry| entry == status)
+                                .unwrap();
+                            let step = if key.code == KeyCode::Tab { 1 } else { 2 };
+                            *status = Status::ALL[(index + step) % Status::ALL.len()];
+                        }
+                    }
                     KeyCode::Down | KeyCode::Tab if matches!(prompt, Prompt::Add) => {
                         let length = self.suggestions().len();
                         if length > 0 {
@@ -374,6 +436,20 @@ impl App {
                         self.suggestion = None;
                     }
                     KeyCode::Enter => {
+                        if let Prompt::Move {
+                            source,
+                            number,
+                            status,
+                        } = prompt
+                        {
+                            let source = source.clone();
+                            let number = *number;
+                            let status = *status;
+                            self.move_item(&source, number, status)?;
+                            self.prompt = None;
+                            self.input.clear();
+                            return Ok(false);
+                        }
                         if matches!(prompt, Prompt::Search) {
                             let status =
                                 self.search.as_ref().and_then(|search| search.filter.status);
@@ -465,18 +541,19 @@ impl App {
                 self.prompt = Some(Prompt::Add);
             }
             KeyCode::Char('e') if length > 0 => {
-                ensure!(self.editable(), "Historical days are read-only in the app");
+                ensure!(self.editable(), "Renaming requires the active day");
                 self.input = self.day().unwrap().numbered()[self.selected].title.clone();
                 self.prompt = Some(Prompt::Edit(number));
             }
             KeyCode::Char('x') if length > 0 => {
-                ensure!(self.editable(), "Historical days are read-only in the app");
+                ensure!(self.editable(), "Removing requires the active day");
                 self.prompt = Some(Prompt::Remove(number));
             }
             KeyCode::Char('t') if length > 0 => self.apply(Change::Move(number, Status::Todo))?,
             KeyCode::Char('s') if length > 0 => self.apply(Change::Move(number, Status::Doing))?,
             KeyCode::Char('d') if length > 0 => self.apply(Change::Move(number, Status::Done))?,
             KeyCode::Char('c') if length > 0 => self.repeat_item(self.current, number)?,
+            KeyCode::Char('m') if length > 0 => self.move_prompt(self.current, number),
             _ => (),
         }
         Ok(false)
@@ -518,9 +595,9 @@ impl App {
                     if self.editable() {
                         "active"
                     } else if day.date > today {
-                        "future (read-only)"
+                        "future (m to move)"
                     } else {
-                        "history (read-only)"
+                        "history (m to move)"
                     },
                     if day.date != today {
                         "  |  not today"
@@ -640,17 +717,17 @@ impl App {
             layout[2],
         );
         let shortcuts = if self.search.is_some() {
-            "↑↓/jk matches  c copy  Enter view  / search  f status\nn new day  r reload  Esc back  ? help  q quit"
+            "↑↓/jk matches  c copy  m move  Enter view  / search  f status\nn new day  r reload  Esc back  ? help  q quit"
         } else {
-            "↑↓/jk items  K/J reorder  ←→/hl days  a add  c copy  / search\ns doing  d done  t todo  e edit  x remove  n new day  r reload  ? help  q quit"
+            "↑↓/jk items  K/J reorder  ←→/hl days  a add  c copy  m move  / search\ns doing  d done  t todo  e edit  x remove  n new day  r reload  ? help  q quit"
         };
         frame.render_widget(
             Paragraph::new(shortcuts).wrap(Wrap { trim: false }),
             layout[3],
         );
         if self.help {
-            let text = "↑↓ or j/k: navigate items\nK/J (Shift-k/j): reorder up/down within a section\n←→ or h/l: browse recorded days\ng/G or Home/End: first/last item\na: add a title to the active day's To do\nc: copy selected item from any day to active To do\n/: search titles across all recorded days\nSearch: f cycles all/Done/To do/Doing; Enter views source\nSearch: c copies; Esc returns to browsing\ns: Doing   d: Done   t: To do\ne: rename   x: remove (confirm with y)\nn: explicitly start today\nr: reload after editing the Markdown files\n\nHistorical days are read-only in Kiroku.\nPrompt: type, Backspace, Ctrl-U to clear, Enter to save.\nAdd prompt: ↑↓/Tab selects a previous title; Ctrl-←/→ chooses insertion position.\nEsc cancels a prompt. Ctrl-C quits.\n\n? or Esc closes help; q quits.";
-            popup(frame, area, " Keyboard help ", text, 24);
+            let text = "↑↓ or j/k: navigate items\nK/J (Shift-k/j): reorder up/down within a section\n←→ or h/l: browse recorded days\ng/G or Home/End: first/last item\na: add a title to the active day's To do\nc: copy selected item from any day to active To do\nm: move selected item to a date and section\n/: search titles across all recorded days\nSearch: f cycles all/Done/To do/Doing; Enter views source\nSearch: c copies; m moves; Esc returns to browsing\ns: Doing   d: Done   t: To do\ne: rename   x: remove (confirm with y)\nn: explicitly start today\nr: reload after editing the Markdown files\n\nHistorical items can be copied or explicitly moved with m.\nOther edits require the active day.\nPrompt: type, Backspace, Ctrl-U to clear, Enter to save.\nMove prompt: enter YYYY-MM-DD; Tab/Shift-Tab selects a section.\nAdd prompt: ↑↓/Tab selects a previous title; Ctrl-←/→ chooses insertion position.\nEsc cancels a prompt. Ctrl-C quits.\n\n? or Esc closes help; q quits.";
+            popup(frame, area, " Keyboard help ", text, 26);
         }
         if let Some(prompt) = &self.prompt {
             let (title, text) = match prompt {
@@ -690,13 +767,31 @@ impl App {
                     " Remove item ",
                     format!("Remove active-day item {n}? Press y to remove, n/Esc to cancel."),
                 ),
+                Prompt::Move {
+                    source,
+                    number,
+                    status,
+                } => (
+                    " Move item — Enter saves, Esc cancels ",
+                    format!(
+                        "{}\nFrom: {}\nDate: {}\nSection: {} (Tab/Shift-Tab changes it)\nType YYYY-MM-DD; Ctrl-U clears the date. Removes the source entry.",
+                        source.numbered()[number - 1].title,
+                        source.date,
+                        self.input,
+                        status.label()
+                    ),
+                ),
             };
             popup(
                 frame,
                 area,
                 title,
                 &text,
-                if matches!(prompt, Prompt::Add) { 12 } else { 6 },
+                match prompt {
+                    Prompt::Add => 12,
+                    Prompt::Move { .. } => 9,
+                    _ => 6,
+                },
             );
         }
         if let Some(error) = &self.error_popup {
@@ -816,6 +911,136 @@ mod tests {
 
     fn press(app: &mut App, code: KeyCode) {
         assert!(!app.key(KeyEvent::new(code, KeyModifiers::NONE)).unwrap());
+    }
+
+    #[test]
+    fn move_prompt_moves_a_historical_duplicate_to_the_chosen_section_and_selects_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let today = Local::now().date_naive();
+        let historical = today - chrono::Duration::days(35);
+        store
+            .add_on_date(historical, "duplicate 日本語", Status::Todo)
+            .unwrap();
+        store
+            .add_on_date(historical, "duplicate 日本語", Status::Doing)
+            .unwrap();
+        store
+            .add_on_date(today, "existing done", Status::Done)
+            .unwrap();
+        let mut app = app(store.clone());
+        app.current = 0;
+        app.selected = 1;
+        press(&mut app, KeyCode::Char('m'));
+        assert_eq!(app.input, today.to_string());
+        press(&mut app, KeyCode::Tab); // Doing -> Done.
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("Move item"));
+        assert!(text.contains(&format!("From: {historical}")));
+        assert!(text.contains("Section: Done"));
+        press(&mut app, KeyCode::Enter);
+        assert!(app.prompt.is_none());
+        assert_eq!(app.day().unwrap().date, today);
+        assert_eq!(app.selected, 1);
+        assert_eq!(
+            app.day().unwrap().numbered()[app.selected].title,
+            "duplicate 日本語"
+        );
+        assert_eq!(
+            app.day().unwrap().numbered()[app.selected].status,
+            Status::Done
+        );
+        let source = store.days(Some((historical, historical))).unwrap();
+        assert_eq!(source[0].items.len(), 1);
+        assert_eq!(source[0].items[0].status, Status::Todo);
+    }
+
+    #[test]
+    fn move_prompt_cancellation_invalid_dates_and_stale_sources_leave_files_unchanged() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let today = Local::now().date_naive();
+        store.add_on_date(today, "source", Status::Todo).unwrap();
+        let path = store.dir.join(format!("{}.md", today.format("%Y-%m")));
+        let original = std::fs::read(&path).unwrap();
+        let mut app = app(store.clone());
+        press(&mut app, KeyCode::Char('m'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::BackTab);
+        assert!(matches!(
+            app.prompt,
+            Some(Prompt::Move {
+                status: Status::Todo,
+                ..
+            })
+        ));
+        press(&mut app, KeyCode::Esc);
+        assert!(app.prompt.is_none());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        press(&mut app, KeyCode::Char('m'));
+        app.key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+            .unwrap();
+        for character in "2026-02-30".chars() {
+            press(&mut app, KeyCode::Char(character));
+        }
+        assert!(
+            app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('m'));
+        let destination = today + chrono::Duration::days(35);
+        app.input = destination.to_string();
+        store
+            .change(Change::Edit(1, "external edit".into()), None)
+            .unwrap();
+        let edited = std::fs::read(&path).unwrap();
+        let error = app
+            .key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap_err();
+        assert!(error.to_string().contains("source day changed"));
+        assert_eq!(std::fs::read(&path).unwrap(), edited);
+        assert!(
+            !store
+                .dir
+                .join(format!("{}.md", destination.format("%Y-%m")))
+                .exists()
+        );
+    }
+
+    #[test]
+    fn search_can_move_to_a_future_day_without_changing_the_active_day() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let today = Local::now().date_naive();
+        let historical = today - chrono::Duration::days(1);
+        let future = today + chrono::Duration::days(1);
+        store
+            .add_on_date(historical, "historical match", Status::Done)
+            .unwrap();
+        store.add_on_date(today, "active", Status::Todo).unwrap();
+        let mut app = app(store.clone());
+        search(&mut app, "match");
+        press(&mut app, KeyCode::Char('m'));
+        app.input = future.to_string();
+        press(&mut app, KeyCode::Tab); // Done -> To do.
+        press(&mut app, KeyCode::Enter);
+        assert!(app.search.is_none());
+        assert_eq!(app.day().unwrap().date, future);
+        assert_eq!(app.day().unwrap().items[0].status, Status::Todo);
+        assert!(!app.editable());
+        assert_eq!(app.active(), Some(today));
+        assert!(store.previous(today).unwrap().unwrap().items.is_empty());
+        assert_eq!(store.active().unwrap().unwrap().items[0].title, "active");
     }
 
     #[test]
