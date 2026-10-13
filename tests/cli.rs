@@ -43,6 +43,32 @@ fn without_ansi(text: &str) -> String {
 }
 
 #[test]
+fn no_separator_is_global_and_leaves_redirected_output_unchanged() {
+    let temp = tempfile::tempdir().unwrap();
+    for args in [
+        &["list"][..],
+        &["l"],
+        &["search", "missing"],
+        &["path"],
+        &["list", "--help"],
+        &["--version"],
+    ] {
+        let plain = success(temp.path(), args);
+        let mut before = vec!["--no-separator"];
+        before.extend(args);
+        assert_eq!(success(temp.path(), &before), plain);
+        let mut after = args.to_vec();
+        after.push("--no-separator");
+        assert_eq!(success(temp.path(), &after), plain);
+    }
+    let plain = run(temp.path(), &["done", "1"]);
+    let without_separator = run(temp.path(), &["done", "1", "--no-separator"]);
+    assert!(!without_separator.status.success());
+    assert_eq!(without_separator.stdout, plain.stdout);
+    assert_eq!(without_separator.stderr, plain.stderr);
+}
+
+#[test]
 fn colored_listings_preserve_text_references_and_stored_titles() {
     let temp = tempfile::tempdir().unwrap();
     let logs = temp.path();

@@ -39,6 +39,12 @@ struct Args {
         help = "Color command output: auto, always, or never"
     )]
     color: ColorMode,
+    #[arg(
+        long,
+        global = true,
+        help = "Omit the separator before long terminal output"
+    )]
+    no_separator: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -253,6 +259,24 @@ enum Command {
     Path,
 }
 
+impl Command {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::NewDay => "new-day",
+            Self::List { .. } => "list",
+            Self::Search { .. } => "search",
+            Self::Doing { .. } => "doing",
+            Self::Done { .. } => "done",
+            Self::Todo { .. } => "todo",
+            Self::Repeat { .. } => "repeat",
+            Self::Edit { .. } => "edit",
+            Self::Move { .. } => "move",
+            Self::Remove { .. } => "remove",
+            Self::Path => "path",
+        }
+    }
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum CliDirection {
     Up,
@@ -280,6 +304,50 @@ fn output(text: &str) -> Result<()> {
     match io::stdout().lock().write_all(text.as_bytes()) {
         Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
         result => result.context("Cannot write output"),
+    }
+}
+
+struct CommandOutput {
+    style: Style,
+    separator: Option<&'static str>,
+    pending: String,
+}
+
+impl CommandOutput {
+    fn write(&mut self, text: &str) -> Result<()> {
+        let Some(command) = self.separator else {
+            return output(text);
+        };
+        // Hold short preambles until we know whether the whole output needs a boundary.
+        self.pending.push_str(text);
+        if self
+            .pending
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .take(3)
+            .count()
+            < 3
+        {
+            return Ok(());
+        }
+        self.separator = None;
+        let heading = format!("── krk {command} ");
+        let width = crossterm::terminal::size()
+            .ok()
+            .map(|(width, _)| usize::from(width))
+            .filter(|&width| width > 0)
+            .unwrap_or(40)
+            .min(60);
+        let rule = "─".repeat(width.saturating_sub(heading.chars().count()));
+        output(&format!(
+            "\n{}\n",
+            self.style.muted(&format!("{heading}{rule}"))
+        ))?;
+        self.finish()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        output(&std::mem::take(&mut self.pending))
     }
 }
 
@@ -316,7 +384,7 @@ fn status_command(
     status: Status,
     target: StatusTarget,
     today: NaiveDate,
-    style: Style,
+    out: &mut CommandOutput,
 ) -> Result<()> {
     let position = target.target.position.map(|position| position.get());
     let day = if target.from.is_some() || Selection::looks_numeric(&value) {
@@ -345,14 +413,14 @@ fn status_command(
         store.change(change, None)?
     };
     if target.target.date.is_some() {
-        updated_date(day, style)
+        updated_date(day, out)
     } else {
-        updated(day, today, style)
+        updated(day, today, out)
     }
 }
 
-fn updated(day: Day, today: chrono::NaiveDate, style: Style) -> Result<()> {
-    output(&listing::render_styled(
+fn updated(day: Day, today: chrono::NaiveDate, out: &mut CommandOutput) -> Result<()> {
+    out.write(&listing::render_styled(
         &View {
             active: Some(day.date),
             days: vec![day],
@@ -361,11 +429,12 @@ fn updated(day: Day, today: chrono::NaiveDate, style: Style) -> Result<()> {
         today,
         None,
         false,
-        style,
+        out.style,
     ))
 }
 
-fn updated_date(day: Day, style: Style) -> Result<()> {
+fn updated_date(day: Day, out: &mut CommandOutput) -> Result<()> {
+    let style = out.style;
     // A targeted update must not advertise historical items as active-day numbers.
     let mut text = format!("{}\n\n", style.heading(&format!("Updated {}.", day.date)));
     for status in Status::ALL {
@@ -379,7 +448,7 @@ fn updated_date(day: Day, style: Style) -> Result<()> {
             text.push_str(&format!("    {}\n", style.muted("(empty)")));
         }
     }
-    output(&text)
+    out.write(&text)
 }
 
 fn filtered_list(
@@ -389,10 +458,10 @@ fn filtered_list(
     status: Option<CliStatus>,
     action: ResultAction,
     today: chrono::NaiveDate,
-    style: Style,
+    out: &mut CommandOutput,
 ) -> Result<()> {
     let filter = listing::Filter::new(query, status.map(Into::into))?;
-    show_or_change(store, period, Some(&filter), action, today, style)
+    show_or_change(store, period, Some(&filter), action, today, out)
 }
 
 fn show_or_change(
@@ -401,8 +470,9 @@ fn show_or_change(
     filter: Option<&listing::Filter>,
     action: ResultAction,
     today: chrono::NaiveDate,
-    style: Style,
+    out: &mut CommandOutput,
 ) -> Result<()> {
+    let style = out.style;
     let select = || match filter {
         Some(filter) => listing::select_filtered(store, period, today, filter),
         None => listing::select(store, period, today),
@@ -430,14 +500,14 @@ fn show_or_change(
         if action.remove.is_some() {
             store.remove_results(&selected)?;
             for &(result, source, number) in &results {
-                output(&format!(
+                out.write(&format!(
                     "Removed result {result} from {}: {}\n",
                     style.heading(&source.date.to_string()),
                     source.numbered()[number - 1].title
                 ))?;
             }
-            output("\n")?;
-            return output(&listing::render_styled(
+            out.write("\n")?;
+            return out.write(&listing::render_styled(
                 &select()?,
                 today,
                 filter,
@@ -463,28 +533,47 @@ fn show_or_change(
             action.position.map(|position| position.get()),
         )?;
         for &(result, source, number) in &results {
-            output(&format!(
+            out.write(&format!(
                 "Repeated result {result} from {}: {}\n",
                 style.heading(&source.date.to_string()),
                 source.numbered()[number - 1].title
             ))?;
         }
-        output("\n")?;
+        out.write("\n")?;
         return if action.date.is_some() {
-            updated_date(day, style)
+            updated_date(day, out)
         } else {
-            updated(day, today, style)
+            updated(day, today, out)
         };
     }
-    output(&listing::render_styled(&view, today, filter, true, style))
+    out.write(&listing::render_styled(&view, today, filter, true, style))
 }
 
 fn run(args: Args, style: Style) -> Result<()> {
+    let separator = args
+        .command
+        .as_ref()
+        .filter(|command| !matches!(command, Command::Path))
+        .filter(|_| !args.no_separator && io::stdout().is_terminal())
+        .map(Command::name);
+    let mut out = CommandOutput {
+        style,
+        separator,
+        pending: String::new(),
+    };
+    let result = run_command(args, &mut out);
+    // Retain any successful preamble even if a later operation fails.
+    out.finish()?;
+    result
+}
+
+fn run_command(args: Args, out: &mut CommandOutput) -> Result<()> {
+    let style = out.style;
     let store = Store::new(config::resolve(args.data_dir.as_deref())?);
     let today = Local::now().date_naive();
     match args.command {
         None => tui::run(store),
-        Some(Command::Path) => output(&format!("{}\n", store.dir.display())),
+        Some(Command::Path) => out.write(&format!("{}\n", store.dir.display())),
         Some(Command::Search {
             query,
             period,
@@ -497,7 +586,7 @@ fn run(args: Args, style: Style) -> Result<()> {
             status,
             action,
             today,
-            style,
+            out,
         ),
         Some(Command::List {
             period,
@@ -513,14 +602,14 @@ fn run(args: Args, style: Style) -> Result<()> {
                     status,
                     action,
                     today,
-                    style,
+                    out,
                 );
             }
-            show_or_change(&store, period.as_deref(), None, action, today, style)
+            show_or_change(&store, period.as_deref(), None, action, today, out)
         }
         Some(Command::NewDay) => {
             let created = store.new_day(today)?;
-            output(&format!(
+            out.write(&format!(
                 "{}: {}\n\n",
                 style.heading(&today.to_string()),
                 if created {
@@ -529,7 +618,7 @@ fn run(args: Args, style: Style) -> Result<()> {
                     "day already started; no changes made"
                 }
             ))?;
-            output(&listing::render_styled(
+            out.write(&listing::render_styled(
                 &listing::select(&store, None, today)?,
                 today,
                 None,
@@ -538,13 +627,13 @@ fn run(args: Args, style: Style) -> Result<()> {
             ))
         }
         Some(Command::Doing { value, target }) => {
-            status_command(&store, value, Status::Doing, target, today, style)
+            status_command(&store, value, Status::Doing, target, today, out)
         }
         Some(Command::Done { value, target }) => {
-            status_command(&store, value, Status::Done, target, today, style)
+            status_command(&store, value, Status::Done, target, today, out)
         }
         Some(Command::Todo { value, target }) => {
-            status_command(&store, value, Status::Todo, target, today, style)
+            status_command(&store, value, Status::Todo, target, today, out)
         }
         Some(Command::Repeat {
             item,
@@ -577,15 +666,15 @@ fn run(args: Args, style: Style) -> Result<()> {
                 target.position.map(|position| position.get()),
             )?;
             if target.date.is_some() {
-                updated_date(day, style)
+                updated_date(day, out)
             } else {
-                updated(day, today, style)
+                updated(day, today, out)
             }
         }
         Some(Command::Edit { selection, title }) => updated(
             change_selected(&store, selection, ItemChange::Edit(title))?,
             today,
-            style,
+            out,
         ),
         Some(Command::Move {
             selection,
@@ -604,12 +693,12 @@ fn run(args: Args, style: Style) -> Result<()> {
                 ),
             )?,
             today,
-            style,
+            out,
         ),
         Some(Command::Remove { selection }) => updated(
             change_selected(&store, selection, ItemChange::Remove)?,
             today,
-            style,
+            out,
         ),
     }
 }

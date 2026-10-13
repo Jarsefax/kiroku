@@ -22,6 +22,24 @@ Numbers are unique across all three sections of the active day.
 
 Run `krk --help` or `krk COMMAND --help` for command help.
 
+Long command output starts with a dimmed separator in the terminal, making
+each listing, search, or update easy to distinguish from the previous command:
+
+```text
+── krk list ────────────────────────────
+2026-10-13 (today; active — numbers are editable)
+  To do
+    [1] weekly meeting
+...
+```
+
+The separator appears once before output with at least three nonblank lines,
+without clearing earlier output. Use `krk list --no-separator` to omit it;
+the flag also works before the command. Piped or redirected output, short
+notices, errors, `krk path`, help, and version output have no separator.
+The separator follows `--color` and `NO_COLOR`; on `TERM=dumb` it is plain
+text. Running `krk` opens the TUI, which manages its own screen.
+
 Your first title addition starts today automatically if there is no active
 day. Use `krk new-day` to start subsequent days and move unfinished work forward.
 
@@ -126,7 +144,7 @@ For example, `krk l week`, `krk t "urgent task"`, and `krk m 3 up -n 2`.
 
 ### Short options
 
-Every command option also has a short form. Global options work before or
+Most options also have a short form. Global options work before or
 after the command; other options apply to the commands that support them.
 
 | Long option | Short option |
@@ -141,6 +159,7 @@ after the command; other options apply to the commands that support them.
 | `--steps` | `-n` |
 | `--data-dir` | `-D` |
 | `--color` | `-c` |
+| `--no-separator` | — |
 | `--help` | `-h` |
 | `--version` | `-V` |
 
