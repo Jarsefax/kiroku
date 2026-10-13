@@ -86,13 +86,25 @@ fn legacy_and_versioned_logs_preserve_bytes_until_an_actual_change() {
 }
 
 #[test]
-fn new_months_have_one_header_and_rollover_keeps_history() {
+fn new_months_have_one_header_and_rollover_preserves_done_and_older_history() {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::new(temp.path().to_path_buf());
     let old = store.dir.join("2026-10.md");
     fs::write(&old, LEGACY).unwrap();
     store.new_day(parse_date("2026-11-02").unwrap()).unwrap();
-    assert_eq!(fs::read_to_string(&old).unwrap(), LEGACY);
+    let expected = format!(
+        "{HEADER}{}",
+        LEGACY
+            .replace("- plan café 日本語\n", "")
+            .replace("- duplicate\n", "")
+    );
+    assert_eq!(fs::read_to_string(&old).unwrap(), expected);
+    let days = store.days(None).unwrap();
+    assert_eq!(days[0].items.len(), 2); // Earlier history is unchanged.
+    assert_eq!(days[1].items.len(), 1);
+    assert_eq!(days[1].items[0].status, Status::Done);
+    assert_eq!(days[2].items.len(), 3);
+    assert!(days[2].items.iter().all(|item| item.status == Status::Todo));
     let path = store.dir.join("2026-11.md");
     assert!(fs::read_to_string(&path).unwrap().starts_with(HEADER));
     store.new_day(parse_date("2026-11-03").unwrap()).unwrap();

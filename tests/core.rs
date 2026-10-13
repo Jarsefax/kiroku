@@ -338,15 +338,15 @@ fn filtered_results_keep_source_references_and_combine_text_status_and_dates() {
     let filter = listing::Filter::new("  MeEtInG  ", Some(Status::Done)).unwrap();
     let view = listing::select_filtered(&store, None, date("2026-10-03"), &filter).unwrap();
     assert_eq!(view.days.len(), 3);
-    assert_eq!(view.days[0].items.len(), 4); // Complete sources, not renumbered matches.
+    assert_eq!(view.days[0].items.len(), 2); // Unfinished entries have moved to the active day.
     let text = listing::render_filtered(&view, date("2026-10-03"), &filter);
     assert!(text.contains("4 matching items"));
     assert!(text.contains("[1] Weekly meeting"));
     assert!(text.contains("[4] weekly meeting"));
     for (result, source_date, source_number) in [
-        (1, "2026-09-30", 3),
-        (2, "2026-09-30", 4),
-        (3, "2026-10-01", 3),
+        (1, "2026-09-30", 1),
+        (2, "2026-09-30", 2),
+        (3, "2026-10-01", 1),
         (4, "2026-10-02", 4),
     ] {
         let (source, number) = view.result(result, Some(&filter)).unwrap();
@@ -383,7 +383,7 @@ fn filtered_results_keep_source_references_and_combine_text_status_and_dates() {
             .unwrap()
             .days
             .len(),
-        2
+        1
     );
     assert_eq!(fs::read(store.dir.join("2026-10.md")).unwrap(), original);
     assert_eq!(
@@ -425,7 +425,7 @@ fn first_day_is_empty_and_starting_again_is_idempotent() {
 }
 
 #[test]
-fn friday_to_monday_carries_todo_and_doing_but_not_done_across_months() {
+fn friday_to_monday_moves_todo_and_doing_and_leaves_only_done_across_months() {
     let (_temp, store) = fixture();
     store.new_day(date("2026-07-31")).unwrap();
     for title in ["todo", "in progress", "finished"] {
@@ -435,7 +435,6 @@ fn friday_to_monday_carries_todo_and_doing_but_not_done_across_months() {
     }
     store.change(Change::Move(3, Status::Done), None).unwrap();
     store.change(Change::Move(2, Status::Doing), None).unwrap();
-    let friday = fs::read(store.dir.join("2026-07.md")).unwrap();
     store.new_day(date("2026-08-03")).unwrap();
     assert_eq!(
         titles(&store),
@@ -444,7 +443,10 @@ fn friday_to_monday_carries_todo_and_doing_but_not_done_across_months() {
             ("in progress".into(), Status::Todo)
         ]
     );
-    assert_eq!(fs::read(store.dir.join("2026-07.md")).unwrap(), friday);
+    let friday = store.previous(date("2026-08-03")).unwrap().unwrap();
+    assert_eq!(friday.items.len(), 1);
+    assert_eq!(friday.items[0].title, "finished");
+    assert_eq!(friday.items[0].status, Status::Done);
     assert_eq!(fs::read_dir(store.dir.join("backups")).unwrap().count(), 0);
     let monday = fs::read(store.dir.join("2026-08.md")).unwrap();
     store

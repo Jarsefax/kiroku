@@ -284,10 +284,45 @@ fn future_dates_do_not_capture_default_additions_moves_copies_or_new_day() {
     success(logs, &["todo", "today addition"]);
     assert_eq!(store.active().unwrap().unwrap().date, today);
     assert_eq!(store.active().unwrap().unwrap().items.len(), 4);
+    assert!(
+        store.days(Some((yesterday, yesterday))).unwrap()[0]
+            .items
+            .is_empty()
+    );
     let future_day = store.days(Some((future, future))).unwrap().remove(0);
     assert_eq!(future_day.items.len(), 1);
     assert_eq!(future_day.items[0].title, "future plan");
     assert_eq!(future_day.items[0].status, Status::Todo);
+}
+
+#[test]
+fn new_day_command_moves_unfinished_items_across_months_and_keeps_done_on_the_source_day() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    let today = Local::now().date_naive();
+    let previous = today - chrono::Duration::days(35);
+    let source_date = previous.to_string();
+    for command in ["todo", "doing", "done"] {
+        success(logs, &[command, "duplicate 日本語", "--date", &source_date]);
+    }
+    let output = success(logs, &["new-day"]);
+    assert!(output.contains("day started"));
+    let store = Store::new(logs.to_path_buf());
+    let days = store.days(None).unwrap();
+    assert_eq!(days.len(), 2);
+    assert_eq!(days[0].date, previous);
+    assert_eq!(days[0].items.len(), 1);
+    assert_eq!(days[0].items[0].status, Status::Done);
+    assert_eq!(days[1].date, today);
+    assert_eq!(days[1].items.len(), 2);
+    assert!(
+        days[1]
+            .items
+            .iter()
+            .all(|item| item.status == Status::Todo && item.title == "duplicate 日本語")
+    );
+    assert!(success(logs, &["n"]).contains("already started"));
+    assert_eq!(store.active().unwrap().unwrap().items.len(), 2);
 }
 
 #[test]
@@ -680,7 +715,7 @@ fn searching_does_not_start_today_or_create_missing_directories() {
 #[test]
 fn repeat_option_copies_search_and_list_results_into_todo() {
     for (args, result, title) in [
-        (&["search", "meeting"][..], "3", "finished meeting"),
+        (&["search", "meeting"][..], "2", "finished meeting"),
         (
             &["search", "meeting", "--status", "done"][..],
             "2",
@@ -690,11 +725,11 @@ fn repeat_option_copies_search_and_list_results_into_todo() {
         (
             &["list", "2026-10-01", "--search", "meeting"][..],
             "1",
-            "second meeting",
+            "finished meeting",
         ),
         (
             &["list", "2026-09-29..2026-10-02"][..],
-            "5",
+            "2",
             "finished meeting",
         ),
         (&["list"][..], "3", "current meeting"),

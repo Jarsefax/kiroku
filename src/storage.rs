@@ -370,6 +370,22 @@ impl Document {
             )
         }
     }
+
+    fn save_move_to(&self, destination: &Self, close_previous_months: bool) -> Result<()> {
+        crate::persistence::save_move(
+            crate::persistence::LogUpdate {
+                path: &destination.path,
+                original: destination.original.as_deref(),
+                content: &destination.contents(),
+            },
+            crate::persistence::LogUpdate {
+                path: &self.path,
+                original: self.original.as_deref(),
+                content: &self.contents(),
+            },
+            close_previous_months,
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -526,25 +542,55 @@ impl Store {
 
     pub fn new_day(&self, today: NaiveDate) -> Result<bool> {
         let _lock = self.lock()?;
-        let previous = self.active_on(today)?;
-        if previous.as_ref().is_some_and(|day| day.date == today) {
+        let previous = self.active_document_on(today)?;
+        if previous
+            .as_ref()
+            .is_some_and(|(document, index)| document.days[*index].date == today)
+        {
             return Ok(false);
         }
+        let unfinished: Vec<_> = previous
+            .as_ref()
+            .map(|(document, index)| {
+                document.days[*index]
+                    .numbered()
+                    .into_iter()
+                    .filter(|item| item.status != Status::Done)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
         let path = self.dir.join(format!("{}.md", today.format("%Y-%m")));
-        let mut document = Document::read_or_empty(path)?;
+        let (mut document, source) = if let Some((mut previous, _)) = previous {
+            // Item lines are ordered by section and file position. Remove in
+            // reverse so comments, Done entries, and all other days stay in place.
+            for item in unfinished.iter().rev() {
+                previous.lines.remove(item.line);
+            }
+            if !unfinished.is_empty() {
+                previous.reparse()?;
+            }
+            if previous.path == path {
+                (previous, None)
+            } else {
+                let source = (!unfinished.is_empty()).then_some(previous);
+                (Document::read_or_empty(path)?, source)
+            }
+        } else {
+            (Document::read_or_empty(path)?, None)
+        };
         let index = document.ensure_day(today)?;
-        if let Some(previous) = &previous {
-            let lines: Vec<_> = previous
-                .numbered()
-                .into_iter()
-                .filter(|item| item.status != Status::Done)
-                .map(|item| format!("- {}{}", item.title, document.newline))
-                .collect();
-            let insertion = document.days[index].headings[Status::Todo.index()] + 1;
-            document.lines.splice(insertion..insertion, lines);
-        }
+        let lines = unfinished
+            .iter()
+            .map(|item| format!("- {}{}", item.title, document.newline));
+        let insertion = document.days[index].headings[Status::Todo.index()] + 1;
+        document.lines.splice(insertion..insertion, lines);
         document.reparse()?;
-        document.save(true)?;
+        if let Some(source) = source {
+            source.save_move_to(&document, true)?;
+        } else {
+            document.save(true)?;
+        }
         Ok(true)
     }
 
@@ -776,18 +822,7 @@ impl Store {
         // Prepare both logs and backups before replacing either. Save and flush
         // the destination first so an interrupted cross-month move cannot lose
         // the item. A partial move may leave a duplicate, with recovery guidance.
-        crate::persistence::save_move(
-            crate::persistence::LogUpdate {
-                path: &destination.path,
-                original: destination.original.as_deref(),
-                content: &destination.contents(),
-            },
-            crate::persistence::LogUpdate {
-                path: &source.path,
-                original: source.original.as_deref(),
-                content: &source.contents(),
-            },
-        )?;
+        source.save_move_to(&destination, false)?;
         Ok(destination.days[index].clone())
     }
 

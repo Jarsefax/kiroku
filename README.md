@@ -23,14 +23,14 @@ Numbers are unique across all three sections of the active day.
 Run `krk --help` or `krk COMMAND --help` for command help.
 
 Your first title addition starts today automatically if there is no active
-day. Use `krk new-day` to start subsequent days and carry unfinished work forward.
+day. Use `krk new-day` to start subsequent days and move unfinished work forward.
 
 ## Commands
 
 | Command | Behavior |
 | --- | --- |
 | `krk` | Open the keyboard-driven TUI |
-| `krk new-day` | Start today explicitly; leave an existing today unchanged |
+| `krk new-day` | Start today and move unfinished items into To do; leave an existing today unchanged |
 | `krk todo "title"` | Add a todo to the active day |
 | `krk list` | Show today; if empty, also show the previous recorded day |
 | `krk search "text" [PERIOD]` | Search titles across all recorded days, or a selected period |
@@ -157,7 +157,7 @@ destination unchanged. If there is no active day, adding a title without
 `--date` creates today, including when only future records exist. Commands
 that use active-day item numbers still require an active day. An explicit
 `--from` can select a recorded source even when only future days exist.
-`new-day` can start today even when future records already exist, and carries
+`new-day` can start today even when future records already exist, and moves
 items only from an earlier
 eligible day. A day already filled using `--date` is left unchanged.
 
@@ -223,11 +223,20 @@ the item in one update. This works with `todo`, `doing`, `done`, and the TUI's
 `a` key. Cancelling an add prompt leaves the log unchanged.
 The first day started through `new-day` starts empty.
 
-Starting a new day copies the previous recorded day's To do and Doing items
-into the new day's To do section. Done items stay behind. Earlier records
-remain intact; skipped days are not created. Starting an already recorded
-today does not copy items again. `new-day` always starts today; date-targeted
-additions create missing records without this carryover.
+Starting a new day moves the previous recorded day's To do and Doing items
+into the new day's To do section, preserving their order and duplicate titles.
+Their source entries are removed, so only Done items remain on the previously
+active day. Its empty To do and Doing headings and comments stay in place.
+Other earlier records remain intact; skipped days are not created. Starting
+an already recorded today leaves all records unchanged. `new-day` always
+starts today; date-targeted additions create missing records without rollover.
+
+Within a month, rollover updates both days in one atomic save. Across months,
+it uses the same destination-first saving as explicit item moves: both logs
+and backups are prepared before replacement, and the new day is flushed
+before unfinished items are removed from the source. If a cross-month save
+reports partial completion, inspect both dates before retrying; interrupted
+rollover may leave unfinished items in both places.
 
 If today has not been started, `krk list` says so and shows the latest recorded
 day on or before today. If today exists but is empty, it shows both today
@@ -492,7 +501,8 @@ After a successful update, Kiroku keeps the newest **five versions for the
 updated monthly file**. When a default active-day write or `new-day` saves
 into a later month, it removes backups for earlier months whose original
 files still exist as regular files. The
-original monthly files are kept unchanged. Backups with missing originals
+original monthly files are retained; rollover removes unfinished source
+entries after saving them in the new month. Backups with missing originals
 are kept for recovery, as are unrelated files in `backups/`. Cleanup also
 runs on later updates, so backups left from earlier months are removed on
 the next successful active-day write. Explicit `--date` updates retain other
@@ -617,7 +627,8 @@ cargo clippy --all-targets -- -D warnings
 cargo test --locked
 ```
 
-Tests cover rollover across weekends/months, numbered duplicate titles,
+Tests cover moving unfinished items during rollover across weekends/months,
+leaving only Done items on the source day, numbered duplicate titles,
 date selection and list fallback, manual comments and CRLF preservation,
 legacy and versioned logs, unsupported-format protection, malformed-file
 protection, stale selections, concurrent writes, configuration,

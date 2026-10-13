@@ -285,7 +285,7 @@ fn default_mutations_and_copies_ignore_future_records_in_the_same_month() {
 }
 
 #[test]
-fn starting_today_with_future_records_carries_only_earlier_work_and_is_idempotent() {
+fn starting_today_with_future_records_moves_only_earlier_work_and_is_idempotent() {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::new(temp.path().to_path_buf());
     store
@@ -315,6 +315,9 @@ fn starting_today_with_future_records_carries_only_earlier_work_and_is_idempoten
         ["carry todo", "carry doing"]
     );
     assert!(days[1].items.iter().all(|item| item.status == Status::Todo));
+    assert_eq!(days[0].items.len(), 1);
+    assert_eq!(days[0].items[0].title, "completed");
+    assert_eq!(days[0].items[0].status, Status::Done);
     assert_eq!(days[2].items.len(), 1);
     let path = store.dir.join("2026-10.md");
     let original = fs::read(&path).unwrap();

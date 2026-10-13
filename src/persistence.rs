@@ -314,14 +314,19 @@ pub(crate) struct LogUpdate<'a> {
     pub content: &'a str,
 }
 
-pub(crate) fn save_move(destination: LogUpdate<'_>, source: LogUpdate<'_>) -> Result<()> {
-    save_move_with(&Disk, destination, source)
+pub(crate) fn save_move(
+    destination: LogUpdate<'_>,
+    source: LogUpdate<'_>,
+    close_previous_months: bool,
+) -> Result<()> {
+    save_move_with(&Disk, destination, source, close_previous_months)
 }
 
 fn save_move_with(
     ops: &impl Operations,
     destination: LogUpdate<'_>,
     source: LogUpdate<'_>,
+    close_previous_months: bool,
 ) -> Result<()> {
     let parent = destination.path.parent().context("Missing log directory")?;
     let destination_temp = prepare(
@@ -352,8 +357,8 @@ fn save_move_with(
         destination.path.display(), source.path.display()
     ))?;
     // Do not prune either month's backups until both logs have been flushed.
-    cleanup(ops, destination.path, false)?;
     cleanup(ops, source.path, false)?;
+    cleanup(ops, destination.path, close_previous_months)?;
     Ok(())
 }
 
@@ -450,6 +455,7 @@ mod tests {
                         original: Some("source item\n"),
                         content: "",
                     },
+                    false,
                 )
                 .unwrap_err();
                 assert!(format!("{error:#}").contains("Save aborted before replacement"));
@@ -470,11 +476,15 @@ mod tests {
 
     #[test]
     fn interrupted_moves_keep_the_item_and_report_partial_application() {
-        for (stage, fail_on, destination_saved, source_saved) in [
-            (Stage::ReplaceLog, 1, false, false),
-            (Stage::ReplaceLog, 2, true, false),
-            (Stage::FlushLogDirectory, 1, true, false),
-            (Stage::FlushLogDirectory, 2, true, true),
+        for (stage, fail_on, destination_saved, source_saved, close_previous_months) in [
+            (Stage::ReplaceLog, 1, false, false, false),
+            (Stage::ReplaceLog, 2, true, false, false),
+            (Stage::FlushLogDirectory, 1, true, false, false),
+            (Stage::FlushLogDirectory, 2, true, true, false),
+            // Rollover also keeps source backups until both logs are durable.
+            (Stage::ReplaceLog, 2, true, false, true),
+            (Stage::FlushLogDirectory, 1, true, false, true),
+            (Stage::FlushLogDirectory, 2, true, true, true),
         ] {
             let temp = tempfile::tempdir().unwrap();
             let source = temp.path().join("2026-09.md");
@@ -493,6 +503,7 @@ mod tests {
                     original: Some("source item\n"),
                     content: "",
                 },
+                close_previous_months,
             )
             .unwrap_err();
             let error = format!("{error:#}");
@@ -540,6 +551,7 @@ mod tests {
                 original: Some("source item\n"),
                 content: "",
             },
+            false,
         )
         .unwrap_err();
         assert!(format!("{error:#}").contains("Update was saved successfully"));

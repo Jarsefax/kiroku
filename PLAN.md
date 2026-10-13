@@ -54,12 +54,14 @@ meeting" or "monthly op meeting - september".
   `--from` together with `--date`. The TUI `m` prompt moves a selected item
   from any day to a chosen date and section. `new-day` always starts today.
 - The first day starts empty.
-- Starting a subsequent day copies the previous recorded day's To do and
-  Doing items into the new day's To do section.
+- Starting a subsequent day moves the previous recorded day's To do and
+  Doing items into the new day's To do section, preserving order and duplicates.
+  Remove their source entries so only Done items remain on the previously
+  active day, retaining its headings and comments.
 - The new day's Doing and Done sections start empty.
 - Move items from To do to Doing, then from Doing to Done.
 - Done items are not carried forward.
-- Preserve previous days' records when copying unfinished items forward.
+- Preserve Done entries and all other earlier days during rollover.
 - CLI commands select items by a number displayed in `krk list`, allowing
   duplicate titles to be selected separately (for example, `krk doing 3`).
 - Initial commands: `krk new-day`, `krk todo "title"`, `krk list`,
@@ -106,13 +108,17 @@ These defaults were adopted for the first implementation.
   selected period has no records.
 - The TUI supports browsing days, navigating items, adding titles, and
   changing status with keyboard shortcuts.
-- If days are skipped, carry unfinished items from the most recent recorded
+- If days are skipped, move unfinished items from the most recent recorded
   day, without creating intervening files.
 - If today's record already exists, the new-day command leaves it intact
   and reports that the day has already been started.
 - `new-day` starts today only. It can insert today before existing future
-  records and carries unfinished work only from an earlier eligible day.
+  records and moves unfinished work only from an earlier eligible day.
   If today's record already exists, leave it unchanged.
+- Rollover within a month updates both days in one save. Across months,
+  prepare both files and backups, save and flush the destination first,
+  then remove source entries. Preserve recovery backups until both files
+  are durable, then apply the usual closed-month cleanup.
 - `--date YYYY-MM-DD` targets title additions and item moves through `todo`,
   `doing`, and `done`, and copies through `repeat` or `list`/`search --repeat`.
   Numeric status moves select the active day's source item; `--from` selects
@@ -156,7 +162,8 @@ These defaults were adopted for the first implementation.
   date, original label, status, and title, newest day first. Navigation
   selects matches; `f` cycles all/Done/To do/Doing, `/` refines the query,
   Enter opens the source day, `c` copies into active To do, and Esc returns
-  to browsing. `n` starts today without losing the selected result;
+  to browsing. `n` starts today without losing the selected result, following
+  an unfinished item to the new day or retaining a Done item on its source day;
   `r` reloads results. Search copies retain stale-view protection.
 - TUI `c` copies the selected item from any day into active To do, jumps to
   the active day, and selects the copy. Reject stale source and destination

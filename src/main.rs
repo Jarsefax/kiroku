@@ -109,7 +109,7 @@ struct CopyResult {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Explicitly start today and carry unfinished items into To do
+    /// Explicitly start today and move unfinished items into its To do section
     #[command(visible_alias = "n")]
     NewDay,
     /// List today, a relative period, a date, or an inclusive FROM..TO range

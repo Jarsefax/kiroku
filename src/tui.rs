@@ -168,12 +168,29 @@ impl App {
     }
 
     fn start_today(&mut self) -> Result<()> {
-        let created = self.store.new_day(Local::now().date_naive())?;
+        let today = Local::now().date_naive();
+        let rollover_selection = self.search.as_ref().and_then(|search| {
+            let &(day_index, item_index) = search.results.get(search.selected)?;
+            let day = &self.days[day_index];
+            let items = day.numbered();
+            (Some(day.date) == self.active()).then(|| {
+                let done = items[item_index].status == Status::Done;
+                let index = items[..item_index]
+                    .iter()
+                    .filter(|item| (item.status == Status::Done) == done)
+                    .count();
+                (if done { day.date } else { today }, index)
+            })
+        });
+        let created = self.store.new_day(today)?;
         self.reload()?;
+        if created && rollover_selection.is_some() {
+            self.rebuild_search(rollover_selection);
+        }
         self.current = self.active_index().unwrap_or(0);
         self.selected = 0;
         self.message = if created {
-            "Started today; unfinished items carried into To do."
+            "Started today; unfinished items moved into To do."
         } else {
             "Today is already started; no changes made."
         }
@@ -1298,7 +1315,7 @@ mod tests {
         assert_eq!(app.search.as_ref().unwrap().results.len(), 4);
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Down);
-        assert_eq!(app.search.as_ref().unwrap().results[2], (0, 2));
+        assert_eq!(app.search.as_ref().unwrap().results[2], (0, 0));
         press(&mut app, KeyCode::Char('c'));
         assert!(app.search.is_none());
         assert!(app.editable());
@@ -1332,6 +1349,9 @@ mod tests {
         let source_date = today - chrono::Duration::days(2);
         store.new_day(source_date).unwrap();
         store
+            .change(Change::Add("matching other".into(), Status::Todo), None)
+            .unwrap();
+        store
             .change(Change::Add("matching title".into(), Status::Doing), None)
             .unwrap();
         store.new_day(today - chrono::Duration::days(1)).unwrap();
@@ -1339,19 +1359,50 @@ mod tests {
         search(&mut app, "matching");
         press(&mut app, KeyCode::End);
         assert_eq!(app.search.as_ref().unwrap().selected, 1);
+        assert_eq!(app.search.as_ref().unwrap().results[1], (1, 1));
         press(&mut app, KeyCode::Char('n'));
         let search = app.search.as_ref().unwrap();
-        assert_eq!(search.results.len(), 3);
-        assert_eq!(search.selected, 2);
-        assert_eq!(search.results[search.selected], (0, 0));
+        assert_eq!(search.results.len(), 2);
+        assert_eq!(search.selected, 1);
+        assert_eq!(search.results[search.selected], (2, 1));
         press(&mut app, KeyCode::Char('c'));
         let active = store.active().unwrap().unwrap();
         assert_eq!(active.date, today);
-        assert_eq!(active.items.len(), 2); // One carried forward, one copied.
-        assert_eq!(app.selected, 1);
+        assert_eq!(active.items.len(), 3); // Two moved forward, one explicitly copied.
+        assert_eq!(app.selected, 2);
+        assert_eq!(active.numbered()[app.selected].title, "matching title");
+        assert!(
+            store.days(Some((source_date, source_date))).unwrap()[0]
+                .items
+                .is_empty()
+        );
+        assert!(store.previous(today).unwrap().unwrap().items.is_empty());
+    }
+
+    #[test]
+    fn starting_today_keeps_a_selected_done_search_result_on_its_historical_day() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let today = Local::now().date_naive();
+        let yesterday = today - chrono::Duration::days(1);
+        store
+            .add_on_date(yesterday, "matching unfinished", Status::Doing)
+            .unwrap();
+        store
+            .add_on_date(yesterday, "matching done", Status::Done)
+            .unwrap();
+        let mut app = app(store.clone());
+        search(&mut app, "matching");
+        press(&mut app, KeyCode::End);
+        press(&mut app, KeyCode::Char('n'));
+        let search = app.search.as_ref().unwrap();
+        assert_eq!(search.results.len(), 2);
+        assert_eq!(search.selected, 1);
+        let (day_index, item_index) = search.results[search.selected];
+        assert_eq!(app.days[day_index].date, yesterday);
         assert_eq!(
-            store.days(Some((source_date, source_date))).unwrap()[0].items[0].status,
-            Status::Doing
+            app.days[day_index].numbered()[item_index].title,
+            "matching done"
         );
     }
 
@@ -1386,7 +1437,7 @@ mod tests {
         press(&mut app, KeyCode::Esc);
         assert!(app.search.is_none());
         search(&mut app, "");
-        assert_eq!(app.search.as_ref().unwrap().results.len(), 5);
+        assert_eq!(app.search.as_ref().unwrap().results.len(), 3);
         for status in [
             Some(Status::Done),
             Some(Status::Todo),
@@ -1402,7 +1453,7 @@ mod tests {
         }
         press(&mut app, KeyCode::End);
         press(&mut app, KeyCode::Down);
-        assert_eq!(app.search.as_ref().unwrap().selected, 4);
+        assert_eq!(app.search.as_ref().unwrap().selected, 2);
         press(&mut app, KeyCode::Home);
         press(&mut app, KeyCode::Up);
         assert_eq!(app.search.as_ref().unwrap().selected, 0);
@@ -1419,7 +1470,7 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         assert!(app.search.is_none());
         assert_eq!(app.current, 0);
-        assert_eq!(app.selected, 2); // Original source index, not result position.
+        assert_eq!(app.selected, 0); // Original source index, not result position.
         search(&mut app, "absent");
         assert!(app.search.as_ref().unwrap().results.is_empty());
         press(&mut app, KeyCode::Char('c'));
@@ -1716,6 +1767,12 @@ mod tests {
         store
             .change(Change::Add("previous work".into(), Status::Todo), None)
             .unwrap();
+        store
+            .change(
+                Change::Add("previous finished work".into(), Status::Done),
+                None,
+            )
+            .unwrap();
         let mut app = app(store.clone());
         press(&mut app, KeyCode::Char('n'));
         press(&mut app, KeyCode::Char('s'));
@@ -1754,7 +1811,7 @@ mod tests {
         );
         assert_eq!(
             store.previous(today).unwrap().unwrap().items[0].status,
-            Status::Todo
+            Status::Done
         );
         press(&mut app, KeyCode::Right);
         assert!(app.editable());
