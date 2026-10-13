@@ -87,3 +87,46 @@ fn dated_removal_rejects_stale_snapshots_and_invalid_sources_without_saving() {
         assert!(!store.dir.join("2026-09.md").exists());
     }
 }
+
+#[test]
+fn result_batches_validate_every_snapshot_before_removing_or_copying() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::new(temp.path().to_path_buf());
+    let first = store
+        .add_on_date(date("2026-09-30"), "first", Status::Done)
+        .unwrap();
+    let stale = store
+        .add_on_date(date("2026-10-02"), "second", Status::Done)
+        .unwrap();
+    store
+        .add_on_date(stale.date, "external item", Status::Todo)
+        .unwrap();
+    let paths = [store.dir.join("2026-09.md"), store.dir.join("2026-10.md")];
+    let originals = paths.each_ref().map(|path| fs::read(path).unwrap());
+    let backups = fs::read_dir(store.dir.join("backups")).unwrap().count();
+    for selected in [
+        vec![(&first, 1), (&stale, 1)],
+        vec![(&first, 1), (&first, 2)],
+    ] {
+        assert!(store.remove_results(&selected).is_err());
+        assert!(
+            store
+                .repeat_results(
+                    Some(date("2026-08-31")),
+                    &selected,
+                    Status::Todo,
+                    None,
+                    None
+                )
+                .is_err()
+        );
+        for (path, original) in paths.iter().zip(&originals) {
+            assert_eq!(fs::read(path).unwrap(), *original);
+        }
+        assert!(!store.dir.join("2026-08.md").exists());
+        assert_eq!(
+            fs::read_dir(store.dir.join("backups")).unwrap().count(),
+            backups
+        );
+    }
+}

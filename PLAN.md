@@ -67,6 +67,19 @@ meeting" or "monthly op meeting - september".
 - Preserve Done entries and all other earlier days during rollover.
 - CLI commands select items by a number displayed in `krk list`, allowing
   duplicate titles to be selected separately (for example, `krk doing 3`).
+- Numbered commands support inclusive ranges, comma-separated selections,
+  and mixtures (`1-3,7`). Apply to removal, reorder, status changes, copies,
+  edits, and list/search result actions. Historical `--from` letters support
+  the same syntax (`A-C,E`). Resolve against the original snapshot, sort by
+  original number, and deduplicate overlapping selections. Validate every
+  source and position before saving. Save each affected month once; prepare
+  every file and backup before replacements across multiple months, and
+  report partial completion if a later replacement or flush fails.
+- Reordering a selection preserves relative order of selected and unselected
+  items, clamps each item at its section boundary, and never crosses sections.
+  Moves and copies insert an ordered block at `--position`; status moves
+  without a position leave already-matching items in place. Batch edits apply
+  the same supplied title to each selected item.
 - Initial commands: `krk new-day`, `krk todo "title"`, `krk list`,
   `krk doing TITLE_OR_NUMBER`, `krk done TITLE_OR_NUMBER`, `krk todo NUMBER`,
   `krk edit NUMBER "title"`, and `krk remove NUMBER`.

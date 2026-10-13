@@ -6,7 +6,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use kiroku::{
     config,
     listing::{self, View},
-    storage::{Change, Day, Direction, Status, Store, parse_date},
+    selection::Selection,
+    storage::{Change, Day, Direction, ItemChange, Status, Store, parse_date},
     style::Style,
 };
 use std::{
@@ -99,18 +100,18 @@ struct ResultAction {
     #[arg(
         short,
         long,
-        value_name = "RESULT_NUMBER",
-        help = "Copy the numbered result into To do; results are recomputed on this run"
+        value_name = "RESULTS",
+        help = "Copy results into To do (for example 1-3,5); results are recomputed on this run"
     )]
-    repeat: Option<usize>,
+    repeat: Option<Selection>,
     #[arg(
         short = 'x',
         long,
         conflicts_with_all = ["repeat", "date", "position"],
-        value_name = "RESULT_NUMBER",
-        help = "Remove the numbered result from its recorded day; results are recomputed on this run"
+        value_name = "RESULTS",
+        help = "Remove results from their recorded days (for example 1-3,5); results are recomputed on this run"
     )]
-    remove: Option<usize>,
+    remove: Option<Selection>,
     #[arg(short, long, requires = "repeat", value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Copy to this date instead of the active day (requires --repeat)")]
     date: Option<NaiveDate>,
 }
@@ -163,7 +164,10 @@ enum Command {
     /// Add a title, or move an item into Doing, optionally on another date
     #[command(visible_alias = "do")]
     Doing {
-        #[arg(value_name = "TITLE_OR_REFERENCE")]
+        #[arg(
+            value_name = "TITLE_OR_REFERENCE",
+            help = "Add a title, or select items (1-3,5; A-C,E with --from)"
+        )]
         value: String,
         #[command(flatten)]
         target: StatusTarget,
@@ -171,7 +175,10 @@ enum Command {
     /// Add a title, or move an item into Done, optionally on another date
     #[command(visible_alias = "d")]
     Done {
-        #[arg(value_name = "TITLE_OR_REFERENCE")]
+        #[arg(
+            value_name = "TITLE_OR_REFERENCE",
+            help = "Add a title, or select items (1-3,5; A-C,E with --from)"
+        )]
         value: String,
         #[command(flatten)]
         target: StatusTarget,
@@ -179,17 +186,20 @@ enum Command {
     /// Add a title, or move an item into To do, optionally on another date
     #[command(visible_alias = "t")]
     Todo {
-        #[arg(value_name = "TITLE_OR_REFERENCE")]
+        #[arg(
+            value_name = "TITLE_OR_REFERENCE",
+            help = "Add a title, or select items (1-3,5; A-C,E with --from)"
+        )]
         value: String,
         #[command(flatten)]
         target: StatusTarget,
     },
-    /// Copy an item into the active day, preserving its original entry
+    /// Copy selected items into the active day, preserving their original entries
     #[command(visible_alias = "r")]
     Repeat {
         #[arg(
-            value_name = "NUMBER_OR_LETTER",
-            help = "Active-day number, or a date-scoped letter with --from (A = first item, B = second, etc.)"
+            value_name = "ITEMS_OR_LETTERS",
+            help = "Active-day numbers (1-3,5), or date-scoped letters with --from (A-C,E)"
         )]
         item: String,
         #[arg(short, long, value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Copy from another recorded day; letters are scoped to this date")]
@@ -205,22 +215,39 @@ enum Command {
         #[command(flatten)]
         target: AddTarget,
     },
-    /// Rename an active-day item
+    /// Rename selected active-day items to the supplied title
     #[command(visible_alias = "e")]
-    Edit { number: usize, title: String },
-    /// Move an active-day item up or down within its section
+    Edit {
+        #[arg(
+            value_name = "ITEMS",
+            help = "Item numbers, ranges, or lists (for example 1-3,5)"
+        )]
+        selection: Selection,
+        title: String,
+    },
+    /// Move selected active-day items up or down within their sections
     #[command(visible_alias = "m")]
     Move {
-        number: usize,
+        #[arg(
+            value_name = "ITEMS",
+            help = "Item numbers, ranges, or lists (for example 1-3,5)"
+        )]
+        selection: Selection,
         #[arg(value_enum)]
         direction: CliDirection,
         /// Number of places to move (stops at the section boundary)
         #[arg(short = 'n', long, default_value = "1", value_name = "N")]
         steps: std::num::NonZeroUsize,
     },
-    /// Remove an active-day item
+    /// Remove selected active-day items
     #[command(visible_alias = "x")]
-    Remove { number: usize },
+    Remove {
+        #[arg(
+            value_name = "ITEMS",
+            help = "Item numbers, ranges, or lists (for example 1-3,5)"
+        )]
+        selection: Selection,
+    },
     /// Print the resolved log directory
     #[command(visible_alias = "p")]
     Path,
@@ -256,27 +283,71 @@ fn output(text: &str) -> Result<()> {
     }
 }
 
-fn status_change(
+fn source_day(store: &Store, from: Option<NaiveDate>) -> Result<Day> {
+    if let Some(date) = from {
+        store
+            .days(Some((date, date)))?
+            .pop()
+            .with_context(|| format!("No recorded day for {date}"))
+    } else {
+        store
+            .active()?
+            .context("No day has been started. Run `krk new-day` first")
+    }
+}
+
+fn parse_references(value: &str, from: Option<NaiveDate>) -> Result<Selection> {
+    if from.is_some() {
+        Selection::letters(value)
+    } else {
+        value.parse()
+    }
+}
+
+fn change_selected(store: &Store, selection: Selection, change: ItemChange) -> Result<Day> {
+    let source = source_day(store, None)?;
+    let numbers = selection.resolve(source.items.len())?;
+    store.change_items(&numbers, change, Some(&source))
+}
+
+fn status_command(
+    store: &Store,
     value: String,
     status: Status,
-    position: Option<std::num::NonZeroUsize>,
-    from: Option<NaiveDate>,
-) -> Result<Change> {
-    if from.is_some() || (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())) {
-        let number = if from.is_some() {
-            listing::letter_number(&value)?
+    target: StatusTarget,
+    today: NaiveDate,
+    style: Style,
+) -> Result<()> {
+    let position = target.target.position.map(|position| position.get());
+    let day = if target.from.is_some() || Selection::looks_numeric(&value) {
+        let selection = parse_references(&value, target.from)?;
+        let source = source_day(store, target.from)?;
+        let numbers = selection.resolve(source.items.len())?;
+        if let Some(date) = target.target.date {
+            store.move_items_on_date_at(
+                date,
+                target.from,
+                &numbers,
+                status,
+                Some(&source),
+                position,
+            )?
         } else {
-            value.parse().context("Item number is too large")?
-        };
-        Ok(match position {
-            Some(position) => Change::MoveAt(number, status, position.get()),
-            None => Change::Move(number, status),
-        })
+            store.change_items(&numbers, ItemChange::Move(status, position), Some(&source))?
+        }
+    } else if let Some(date) = target.target.date {
+        store.add_on_date_at(date, &value, status, position)?
     } else {
-        Ok(match position {
-            Some(position) => Change::AddAt(value, status, position.get()),
+        let change = match position {
+            Some(position) => Change::AddAt(value, status, position),
             None => Change::Add(value, status),
-        })
+        };
+        store.change(change, None)?
+    };
+    if target.target.date.is_some() {
+        updated_date(day, style)
+    } else {
+        updated(day, today, style)
     }
 }
 
@@ -337,62 +408,73 @@ fn show_or_change(
         None => listing::select(store, period, today),
     };
     let view = select()?;
-    if let Some(result) = action.remove {
-        let (source, number) = view.result(result, filter)?;
-        store.remove_on_date(source.date, number, Some(source))?;
-        output(&format!(
-            "Removed result {result} from {}: {}\n\n",
-            style.heading(&source.date.to_string()),
-            source.numbered()[number - 1].title
-        ))?;
-        return output(&listing::render_styled(
-            &select()?,
-            today,
-            filter,
-            true,
-            style,
-        ));
-    }
-    if let Some(result) = action.repeat {
-        let (source, number) = view.result(result, filter)?;
-        if let Some(date) = action.date {
-            let day = store.repeat_on_date_at(
-                date,
-                Some(source.date),
-                number,
-                Status::Todo,
-                Some(source),
-                action.position.map(|n| n.get()),
-            )?;
+    if let Some(selection) = action.remove.as_ref().or(action.repeat.as_ref()) {
+        let available = view
+            .days
+            .iter()
+            .flat_map(|day| &day.items)
+            .filter(|item| filter.is_none_or(|filter| filter.matches(item)))
+            .count();
+        let results = selection
+            .resolve(available)?
+            .into_iter()
+            .map(|result| {
+                view.result(result, filter)
+                    .map(|(source, number)| (result, source, number))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let selected = results
+            .iter()
+            .map(|&(_, source, number)| (source, number))
+            .collect::<Vec<_>>();
+        if action.remove.is_some() {
+            store.remove_results(&selected)?;
+            for &(result, source, number) in &results {
+                output(&format!(
+                    "Removed result {result} from {}: {}\n",
+                    style.heading(&source.date.to_string()),
+                    source.numbered()[number - 1].title
+                ))?;
+            }
+            output("\n")?;
+            return output(&listing::render_styled(
+                &select()?,
+                today,
+                filter,
+                true,
+                style,
+            ));
+        }
+        let active = if action.date.is_none() {
+            let active = source_day(store, None)?;
+            anyhow::ensure!(
+                Some(active.date) == view.active,
+                "The active day changed during the search or listing. Rerun the command"
+            );
+            Some(active)
+        } else {
+            None
+        };
+        let day = store.repeat_results(
+            action.date,
+            &selected,
+            Status::Todo,
+            active.as_ref(),
+            action.position.map(|position| position.get()),
+        )?;
+        for &(result, source, number) in &results {
             output(&format!(
-                "Repeated result {result} from {}: {}\n\n",
+                "Repeated result {result} from {}: {}\n",
                 style.heading(&source.date.to_string()),
                 source.numbered()[number - 1].title
             ))?;
-            return updated_date(day, style);
         }
-        let active = store
-            .active()?
-            .context("No day has been started. Run `krk new-day` first")?;
-        anyhow::ensure!(
-            Some(active.date) == view.active,
-            "The active day changed during the search or listing. Rerun the command"
-        );
-        let from = (source.date != active.date).then_some(source.date);
-        let day = store.repeat_at(
-            from,
-            number,
-            Status::Todo,
-            Some(source),
-            Some(&active),
-            action.position.map(|n| n.get()),
-        )?;
-        output(&format!(
-            "Repeated result {result} from {}: {}\n\n",
-            style.heading(&source.date.to_string()),
-            source.numbered()[number - 1].title
-        ))?;
-        return updated(day, today, style);
+        output("\n")?;
+        return if action.date.is_some() {
+            updated_date(day, style)
+        } else {
+            updated(day, today, style)
+        };
     }
     output(&listing::render_styled(&view, today, filter, true, style))
 }
@@ -400,25 +482,23 @@ fn show_or_change(
 fn run(args: Args, style: Style) -> Result<()> {
     let store = Store::new(config::resolve(args.data_dir.as_deref())?);
     let today = Local::now().date_naive();
-    let (change, date, from) = match args.command {
-        None => return tui::run(store),
-        Some(Command::Path) => return output(&format!("{}\n", store.dir.display())),
+    match args.command {
+        None => tui::run(store),
+        Some(Command::Path) => output(&format!("{}\n", store.dir.display())),
         Some(Command::Search {
             query,
             period,
             status,
             action,
-        }) => {
-            return filtered_list(
-                &store,
-                period.as_deref(),
-                &query,
-                status,
-                action,
-                today,
-                style,
-            );
-        }
+        }) => filtered_list(
+            &store,
+            period.as_deref(),
+            &query,
+            status,
+            action,
+            today,
+            style,
+        ),
         Some(Command::List {
             period,
             search,
@@ -436,7 +516,7 @@ fn run(args: Args, style: Style) -> Result<()> {
                     style,
                 );
             }
-            return show_or_change(&store, period.as_deref(), None, action, today, style);
+            show_or_change(&store, period.as_deref(), None, action, today, style)
         }
         Some(Command::NewDay) => {
             let created = store.new_day(today)?;
@@ -449,106 +529,89 @@ fn run(args: Args, style: Style) -> Result<()> {
                     "day already started; no changes made"
                 }
             ))?;
-            return output(&listing::render_styled(
+            output(&listing::render_styled(
                 &listing::select(&store, None, today)?,
                 today,
                 None,
                 false,
                 style,
-            ));
+            ))
         }
-        Some(Command::Doing { value, target }) => (
-            status_change(value, Status::Doing, target.target.position, target.from)?,
-            target.target.date,
-            target.from,
-        ),
-        Some(Command::Done { value, target }) => (
-            status_change(value, Status::Done, target.target.position, target.from)?,
-            target.target.date,
-            target.from,
-        ),
-        Some(Command::Todo { value, target }) => (
-            status_change(value, Status::Todo, target.target.position, target.from)?,
-            target.target.date,
-            target.from,
-        ),
+        Some(Command::Doing { value, target }) => {
+            status_command(&store, value, Status::Doing, target, today, style)
+        }
+        Some(Command::Done { value, target }) => {
+            status_command(&store, value, Status::Done, target, today, style)
+        }
+        Some(Command::Todo { value, target }) => {
+            status_command(&store, value, Status::Todo, target, today, style)
+        }
         Some(Command::Repeat {
             item,
             from,
             status,
             target,
         }) => {
-            let number = if from.is_some() {
-                listing::letter_number(&item)?
-            } else {
+            let selection = parse_references(&item, from)?;
+            let source = source_day(&store, from)?;
+            let numbers = selection.resolve(source.items.len())?;
+            let active = if target.date.is_none() {
+                let active = source_day(&store, None)?;
                 anyhow::ensure!(
-                    !item.is_empty() && item.bytes().all(|b| b.is_ascii_digit()),
-                    "Use an active-day number, or --from YYYY-MM-DD with a historical letter"
+                    from.is_none() || source.date != active.date,
+                    "--from must select a different recorded day; use active-day numbers otherwise"
                 );
-                item.parse().context("Item number is too large")?
+                Some(active)
+            } else {
+                None
             };
-            if let Some(date) = target.date {
-                return updated_date(
-                    store.repeat_on_date_at(
-                        date,
-                        from,
-                        number,
-                        status.into(),
-                        None,
-                        target.position.map(|n| n.get()),
-                    )?,
-                    style,
-                );
+            let selected = numbers
+                .iter()
+                .map(|&number| (&source, number))
+                .collect::<Vec<_>>();
+            let day = store.repeat_results(
+                target.date,
+                &selected,
+                status.into(),
+                active.as_ref(),
+                target.position.map(|position| position.get()),
+            )?;
+            if target.date.is_some() {
+                updated_date(day, style)
+            } else {
+                updated(day, today, style)
             }
-            return updated(
-                store.repeat_at(
-                    from,
-                    number,
-                    status.into(),
-                    None,
-                    None,
-                    target.position.map(|n| n.get()),
-                )?,
-                today,
-                style,
-            );
         }
-        Some(Command::Edit { number, title }) => (Change::Edit(number, title), None, None),
+        Some(Command::Edit { selection, title }) => updated(
+            change_selected(&store, selection, ItemChange::Edit(title))?,
+            today,
+            style,
+        ),
         Some(Command::Move {
-            number,
+            selection,
             direction,
             steps,
-        }) => (
-            Change::Reorder(
-                number,
-                match direction {
-                    CliDirection::Up => Direction::Up,
-                    CliDirection::Down => Direction::Down,
-                },
-                steps.get(),
-            ),
-            None,
-            None,
+        }) => updated(
+            change_selected(
+                &store,
+                selection,
+                ItemChange::Reorder(
+                    match direction {
+                        CliDirection::Up => Direction::Up,
+                        CliDirection::Down => Direction::Down,
+                    },
+                    steps.get(),
+                ),
+            )?,
+            today,
+            style,
         ),
-        Some(Command::Remove { number }) => (Change::Remove(number), None, None),
-    };
-    if let Some(date) = date {
-        let day = match change {
-            Change::Add(title, status) => store.add_on_date(date, &title, status)?,
-            Change::AddAt(title, status, position) => {
-                store.add_on_date_at(date, &title, status, Some(position))?
-            }
-            Change::Move(number, status) => {
-                store.move_on_date_at(date, from, number, status, None, None)?
-            }
-            Change::MoveAt(number, status, position) => {
-                store.move_on_date_at(date, from, number, status, None, Some(position))?
-            }
-            _ => unreachable!(),
-        };
-        return updated_date(day, style);
+        Some(Command::Remove { selection }) => updated(
+            change_selected(&store, selection, ItemChange::Remove)?,
+            today,
+            style,
+        ),
     }
-    updated(store.change(change, None)?, today, style)
 }
 
 fn main() {

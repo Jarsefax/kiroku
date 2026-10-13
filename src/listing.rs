@@ -332,7 +332,7 @@ pub fn render_styled(
         output.push('\n');
     }
     if result_numbers && result_number > 0 {
-        let _ = writeln!(output, "{}", style.muted("Append `--repeat N` to copy result [N] into active To do, or `--remove N` to remove it from its recorded day. Results are recomputed on each run."));
+        let _ = writeln!(output, "{}", style.muted("Append `--repeat N` to copy result [N] into active To do, or `--remove N` to remove it from its recorded day. N accepts ranges and lists (1-3,5). Results are recomputed on each run."));
     }
     if result_numbers && result_number > 0 && !editable_numbers {
         let _ = writeln!(

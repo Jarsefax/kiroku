@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail, ensure};
 use chrono::{Datelike, Local, NaiveDate};
 use fs2::FileExt;
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     path::PathBuf,
 };
@@ -87,6 +88,24 @@ impl Day {
                 .map(|i| (&i.title, i.status))
                 .eq(expected.items.iter().map(|i| (&i.title, i.status)))
     }
+}
+
+fn selected_items(day: &Day, numbers: &[usize]) -> Result<Vec<Item>> {
+    ensure!(!numbers.is_empty(), "Select at least one item");
+    let numbered = day.numbered();
+    numbers
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|number| {
+            numbered
+                .get(number.wrapping_sub(1))
+                .copied()
+                .cloned()
+                .with_context(|| format!("No source item {number} on {}", day.date))
+        })
+        .collect()
 }
 
 pub fn parse_date(text: &str) -> Result<NaiveDate> {
@@ -345,6 +364,105 @@ impl Document {
         Ok(())
     }
 
+    fn remove_items(&mut self, items: &[Item]) -> Result<()> {
+        let lines = items.iter().map(|item| item.line).collect::<BTreeSet<_>>();
+        for line in lines.into_iter().rev() {
+            self.lines.remove(line);
+        }
+        self.reparse()
+    }
+
+    fn insert_items(
+        &mut self,
+        day_index: usize,
+        status: Status,
+        items: &[Item],
+        position: Option<usize>,
+    ) -> Result<()> {
+        for (offset, item) in items.iter().enumerate() {
+            let position = position
+                .map(|position| {
+                    position
+                        .checked_add(offset)
+                        .context("Position is too large")
+                })
+                .transpose()?;
+            self.insert_item(day_index, status, &item.title, position)?;
+            self.reparse()?;
+        }
+        Ok(())
+    }
+
+    fn change_items(&mut self, day_index: usize, items: &[Item], change: ItemChange) -> Result<()> {
+        match change {
+            ItemChange::Remove => self.remove_items(items)?,
+            ItemChange::Edit(title) => {
+                let title = validate_title(&title)?;
+                for item in items {
+                    let raw = &self.lines[item.line];
+                    let ending = &raw[raw.trim_end_matches(['\r', '\n']).len()..];
+                    self.lines[item.line] = format!("- {title}{ending}");
+                }
+                self.reparse()?;
+            }
+            ItemChange::Move(status, position) => {
+                let moved = items
+                    .iter()
+                    .filter(|item| position.is_some() || item.status != status)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                self.remove_items(&moved)?;
+                self.insert_items(day_index, status, &moved, position)?;
+            }
+            ItemChange::Reorder(direction, steps) => {
+                ensure!(steps > 0, "Reorder steps must be greater than zero");
+                let selected = items.iter().map(|item| item.line).collect::<BTreeSet<_>>();
+                for status in Status::ALL {
+                    let section = self.days[day_index]
+                        .items
+                        .iter()
+                        .filter(|item| item.status == status)
+                        .collect::<Vec<_>>();
+                    let indices = section
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, item)| selected.contains(&item.line).then_some(index))
+                        .collect::<Vec<_>>();
+                    let mut order = vec![None; section.len()];
+                    for (rank, &index) in indices.iter().enumerate() {
+                        let target = match direction {
+                            Direction::Up => index.saturating_sub(steps).max(rank),
+                            Direction::Down => index
+                                .saturating_add(steps)
+                                .min(section.len() - indices.len() + rank),
+                        };
+                        order[target] = Some(index);
+                    }
+                    let mut unselected = section.iter().enumerate().filter_map(|(index, item)| {
+                        (!selected.contains(&item.line)).then_some(index)
+                    });
+                    let contents = section
+                        .iter()
+                        .map(|item| {
+                            self.lines[item.line]
+                                .trim_end_matches(['\r', '\n'])
+                                .to_owned()
+                        })
+                        .collect::<Vec<_>>();
+                    // Keep comments and line endings at their original positions.
+                    for (item, index) in section.iter().zip(order) {
+                        let index = index.unwrap_or_else(|| unselected.next().unwrap());
+                        let raw = &self.lines[item.line];
+                        let ending = &raw[raw.trim_end_matches(['\r', '\n']).len()..];
+                        self.lines[item.line] = format!("{}{ending}", contents[index]);
+                    }
+                }
+                self.reparse()?;
+            }
+        }
+        Ok(())
+    }
+
     fn contents(&self) -> String {
         let mut contents = self.lines.concat();
         // Legacy files are format 1 after validation. Annotate only an actual
@@ -399,6 +517,14 @@ pub enum Change {
     Remove(usize),
 }
 
+#[derive(Clone, Debug)]
+pub enum ItemChange {
+    Move(Status, Option<usize>),
+    Reorder(Direction, usize),
+    Edit(String),
+    Remove,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum Direction {
     Up,
@@ -417,6 +543,11 @@ impl Direction {
 #[derive(Clone)]
 pub struct Store {
     pub dir: PathBuf,
+}
+
+struct SelectedDocuments {
+    documents: BTreeMap<PathBuf, Document>,
+    items: Vec<(PathBuf, Item)>,
 }
 
 impl Store {
@@ -595,137 +726,80 @@ impl Store {
     }
 
     pub fn change(&self, change: Change, expected: Option<&Day>) -> Result<Day> {
+        match change {
+            Change::Move(number, status) => {
+                return self.change_items(&[number], ItemChange::Move(status, None), expected);
+            }
+            Change::MoveAt(number, status, position) => {
+                return self.change_items(
+                    &[number],
+                    ItemChange::Move(status, Some(position)),
+                    expected,
+                );
+            }
+            Change::Reorder(number, direction, steps) => {
+                return self.change_items(
+                    &[number],
+                    ItemChange::Reorder(direction, steps),
+                    expected,
+                );
+            }
+            Change::Edit(number, title) => {
+                return self.change_items(&[number], ItemChange::Edit(title), expected);
+            }
+            Change::Remove(number) => {
+                return self.change_items(&[number], ItemChange::Remove, expected);
+            }
+            _ => (),
+        }
+        let (title, status, position) = match change {
+            Change::Add(title, status) => (title, status, None),
+            Change::AddAt(title, status, position) => (title, status, Some(position)),
+            _ => unreachable!(),
+        };
+        let title = validate_title(&title)?;
         let _lock = self.lock()?;
         let today = Local::now().date_naive();
-        let active = self.active_document_on(today)?;
-        let (mut document, day_index) = match active {
-            Some(active) => active,
-            None => {
-                ensure!(
-                    expected.is_none(),
-                    "The active day changed outside this view. Reload it before editing"
-                );
-                match change {
-                    Change::Add(title, status) => {
-                        return self.insert_on_date(today, validate_title(&title)?, status, None);
-                    }
-                    Change::AddAt(title, status, position) => {
-                        return self.insert_on_date(
-                            today,
-                            validate_title(&title)?,
-                            status,
-                            Some(position),
-                        );
-                    }
-                    _ => (),
-                }
-                bail!("No day has been started. Run `krk new-day` first");
-            }
+        let Some((mut document, index)) = self.active_document_on(today)? else {
+            ensure!(
+                expected.is_none(),
+                "The active day changed outside this view. Reload it before editing"
+            );
+            return self.insert_on_date(today, title, status, position);
         };
-        let day = &document.days[day_index];
         if let Some(expected) = expected {
             ensure!(
-                day.matches(expected),
+                document.days[index].matches(expected),
                 "The active day changed outside this view. Reload it before editing"
             );
         }
-        match change {
-            Change::Add(title, status) => {
-                document.insert_item(day_index, status, validate_title(&title)?, None)?
-            }
-            Change::AddAt(title, status, position) => {
-                document.insert_item(day_index, status, validate_title(&title)?, Some(position))?
-            }
-            change => {
-                let number = match &change {
-                    Change::Move(n, _)
-                    | Change::MoveAt(n, _, _)
-                    | Change::Reorder(n, _, _)
-                    | Change::Edit(n, _)
-                    | Change::Remove(n) => *n,
-                    _ => unreachable!(),
-                };
-                let item = day
-                    .numbered()
-                    .get(number.wrapping_sub(1))
-                    .copied()
-                    .with_context(|| {
-                        format!(
-                            "No active-day item {number}; run `krk list` to see current numbers"
-                        )
-                    })?
-                    .clone();
-                match change {
-                    Change::Reorder(_, direction, steps) => {
-                        ensure!(steps > 0, "Reorder steps must be greater than zero");
-                        let section: Vec<_> = day
-                            .items
-                            .iter()
-                            .filter(|entry| entry.status == item.status)
-                            .collect();
-                        let index = section
-                            .iter()
-                            .position(|entry| entry.line == item.line)
-                            .unwrap();
-                        let target = match direction {
-                            Direction::Up => index.saturating_sub(steps),
-                            Direction::Down => index.saturating_add(steps).min(section.len() - 1),
-                        };
-                        if target == index {
-                            return Ok(day.clone());
-                        }
-                        let affected = &section[index.min(target)..=index.max(target)];
-                        let mut contents: Vec<_> = affected
-                            .iter()
-                            .map(|entry| {
-                                document.lines[entry.line]
-                                    .trim_end_matches(['\r', '\n'])
-                                    .to_owned()
-                            })
-                            .collect();
-                        match direction {
-                            Direction::Up => contents.rotate_right(1),
-                            Direction::Down => contents.rotate_left(1),
-                        }
-                        // Move item text while leaving comments and line endings in place.
-                        for (entry, content) in affected.iter().zip(contents) {
-                            let raw = &document.lines[entry.line];
-                            let ending = &raw[raw.trim_end_matches(['\r', '\n']).len()..];
-                            document.lines[entry.line] = format!("{content}{ending}");
-                        }
-                    }
-                    Change::Edit(_, title) => {
-                        document.lines[item.line] = format!(
-                            "- {}{}",
-                            validate_title(&title)?,
-                            if document.lines[item.line].ends_with('\n') {
-                                document.newline
-                            } else {
-                                ""
-                            }
-                        )
-                    }
-                    Change::Remove(_) => {
-                        document.lines.remove(item.line);
-                    }
-                    Change::Move(_, status) if item.status == status => return Ok(day.clone()),
-                    Change::Move(_, status) => {
-                        document.lines.remove(item.line);
-                        document.reparse()?;
-                        document.insert_item(day_index, status, &item.title, None)?;
-                    }
-                    Change::MoveAt(_, status, position) => {
-                        document.lines.remove(item.line);
-                        document.reparse()?;
-                        document.insert_item(day_index, status, &item.title, Some(position))?;
-                    }
-                    _ => unreachable!(),
-                }
-            }
-        }
+        document.insert_item(index, status, title, position)?;
         document.reparse()?;
         document.save(true)?;
-        Ok(document.days[day_index].clone())
+        Ok(document.days[index].clone())
+    }
+
+    /// Apply a selection against one original active-day snapshot and save once.
+    pub fn change_items(
+        &self,
+        numbers: &[usize],
+        change: ItemChange,
+        expected: Option<&Day>,
+    ) -> Result<Day> {
+        let _lock = self.lock()?;
+        let (mut document, index) = self
+            .active_document_on(Local::now().date_naive())?
+            .context("No day has been started. Run `krk new-day` first")?;
+        if let Some(expected) = expected {
+            ensure!(
+                document.days[index].matches(expected),
+                "The active day changed outside this view. Reload it before editing"
+            );
+        }
+        let items = selected_items(&document.days[index], numbers)?;
+        document.change_items(index, &items, change)?;
+        document.save(true)?;
+        Ok(document.days[index].clone())
     }
 
     /// Remove one item from a recorded date without changing the active day.
@@ -761,6 +835,111 @@ impl Store {
         document.reparse()?;
         // Removing from history or a future plan does not close other months.
         document.save(false)?;
+        Ok(document.days[index].clone())
+    }
+
+    // The caller holds the directory lock; validate every source before editing.
+    fn read_selection(&self, selected: &[(&Day, usize)]) -> Result<SelectedDocuments> {
+        ensure!(!selected.is_empty(), "Select at least one item");
+        let mut documents = BTreeMap::new();
+        let mut items = Vec::new();
+        let mut seen = BTreeSet::new();
+        for &(expected, number) in selected {
+            if !seen.insert((expected.date, number)) {
+                continue;
+            }
+            let path = self
+                .dir
+                .join(format!("{}.md", expected.date.format("%Y-%m")));
+            let document = match documents.entry(path.clone()) {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(Document::read_or_empty(path.clone())?)
+                }
+            };
+            let day = document
+                .days
+                .iter()
+                .find(|day| day.date == expected.date)
+                .with_context(|| format!("No recorded day for {}", expected.date))?;
+            ensure!(
+                day.matches(expected),
+                "The source day changed outside this view. Rerun the search or listing before changing items"
+            );
+            let item = selected_items(day, &[number])?.pop().unwrap();
+            items.push((path, item));
+        }
+        Ok(SelectedDocuments { documents, items })
+    }
+
+    /// Remove listed results from their original dates, saving each month once.
+    pub fn remove_results(&self, selected: &[(&Day, usize)]) -> Result<()> {
+        let _lock = self.lock()?;
+        let mut selection = self.read_selection(selected)?;
+        let mut grouped = BTreeMap::<_, Vec<_>>::new();
+        for (path, item) in selection.items {
+            grouped.entry(path).or_default().push(item);
+        }
+        for (path, items) in grouped {
+            selection
+                .documents
+                .get_mut(&path)
+                .unwrap()
+                .remove_items(&items)?;
+        }
+        let contents = selection
+            .documents
+            .values()
+            .map(Document::contents)
+            .collect::<Vec<_>>();
+        let updates = selection
+            .documents
+            .values()
+            .zip(&contents)
+            .map(|(document, content)| crate::persistence::LogUpdate {
+                path: &document.path,
+                original: document.original.as_deref(),
+                content,
+            })
+            .collect::<Vec<_>>();
+        crate::persistence::save_batch(&updates)
+    }
+
+    /// Copy listed results in display order into one destination, saving once.
+    pub fn repeat_results(
+        &self,
+        date: Option<NaiveDate>,
+        selected: &[(&Day, usize)],
+        status: Status,
+        expected_active: Option<&Day>,
+        position: Option<usize>,
+    ) -> Result<Day> {
+        let _lock = self.lock()?;
+        let selection = self.read_selection(selected)?;
+        let (mut document, index) = if let Some(date) = date {
+            let path = self.dir.join(format!("{}.md", date.format("%Y-%m")));
+            let mut document = Document::read_or_empty(path)?;
+            let index = document.ensure_day(date)?;
+            (document, index)
+        } else {
+            let (document, index) = self
+                .active_document_on(Local::now().date_naive())?
+                .context("No day has been started. Run `krk new-day` first")?;
+            if let Some(expected) = expected_active {
+                ensure!(
+                    document.days[index].matches(expected),
+                    "The active day changed outside this view. Reload it before repeating"
+                );
+            }
+            (document, index)
+        };
+        let items = selection
+            .items
+            .into_iter()
+            .map(|(_, item)| item)
+            .collect::<Vec<_>>();
+        document.insert_items(index, status, &items, position)?;
+        document.save(date.is_none())?;
         Ok(document.days[index].clone())
     }
 
@@ -811,6 +990,18 @@ impl Store {
         expected_source: Option<&Day>,
         position: Option<usize>,
     ) -> Result<Day> {
+        self.move_items_on_date_at(date, from, &[number], status, expected_source, position)
+    }
+
+    pub fn move_items_on_date_at(
+        &self,
+        date: NaiveDate,
+        from: Option<NaiveDate>,
+        numbers: &[usize],
+        status: Status,
+        expected_source: Option<&Day>,
+        position: Option<usize>,
+    ) -> Result<Day> {
         let _lock = self.lock()?;
         let (mut source, source_index) = if let Some(from) = from {
             let path = self.dir.join(format!("{}.md", from.format("%Y-%m")));
@@ -832,29 +1023,23 @@ impl Store {
                 "The source day changed outside this view. Reload it before moving"
             );
         }
-        let item = source_day
-            .numbered()
-            .get(number.wrapping_sub(1))
-            .copied()
-            .with_context(|| format!("No source item {number} on {}", source_day.date))?
-            .clone();
-        if date == source_day.date && status == item.status && position.is_none() {
-            return Ok(source_day.clone());
-        }
+        let items = selected_items(source_day, numbers)?;
         let destination_path = self.dir.join(format!("{}.md", date.format("%Y-%m")));
-        source.lines.remove(item.line);
-        source.reparse()?;
+        if date == source_day.date {
+            source.change_items(source_index, &items, ItemChange::Move(status, position))?;
+            source.save(false)?;
+            return Ok(source.days[source_index].clone());
+        }
+        source.remove_items(&items)?;
         if source.path == destination_path {
             let index = source.ensure_day(date)?;
-            source.insert_item(index, status, &item.title, position)?;
-            source.reparse()?;
+            source.insert_items(index, status, &items, position)?;
             source.save(false)?;
             return Ok(source.days[index].clone());
         }
         let mut destination = Document::read_or_empty(destination_path)?;
         let index = destination.ensure_day(date)?;
-        destination.insert_item(index, status, &item.title, position)?;
-        destination.reparse()?;
+        destination.insert_items(index, status, &items, position)?;
         // Prepare both logs and backups before replacing either. Save and flush
         // the destination first so an interrupted cross-month move cannot lose
         // the item. A partial move may leave a duplicate, with recovery guidance.

@@ -314,6 +314,54 @@ pub(crate) struct LogUpdate<'a> {
     pub content: &'a str,
 }
 
+pub(crate) fn save_batch(updates: &[LogUpdate<'_>]) -> Result<()> {
+    save_batch_with(&Disk, updates)
+}
+
+fn save_batch_with(ops: &impl Operations, updates: &[LogUpdate<'_>]) -> Result<()> {
+    if let [update] = updates {
+        return save_with_cleanup(ops, update.path, update.original, update.content, false);
+    }
+    // Prepare every log and recovery backup before replacing any live file.
+    let prepared = updates
+        .iter()
+        .map(|update| prepare(ops, update.path, update.original, update.content))
+        .collect::<Result<Vec<_>>>()?;
+    for update in updates {
+        check_original(update.path, update.original)?;
+    }
+    let paths = updates
+        .iter()
+        .map(|update| update.path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    for (index, (update, temporary)) in updates.iter().zip(prepared).enumerate() {
+        let commit = || -> Result<()> {
+            replace(ops, update.path, update.original, temporary)?;
+            ops.flush_directory(
+                Stage::FlushLogDirectory,
+                update.path.parent().context("Missing log directory")?,
+            )
+            .with_context(|| {
+                format!(
+                    "Update is already visible in {}, but the directory flush failed",
+                    update.path.display()
+                )
+            })?;
+            Ok(())
+        };
+        commit().with_context(|| format!(
+            "Batch update may be partially applied ({} earlier files saved). Inspect all affected files before retrying: {paths}. Persistence after a failed directory flush is uncertain; previous contents are in backups/",
+            index
+        ))?;
+    }
+    // Preserve recovery data until all replacements have been flushed.
+    for update in updates {
+        cleanup(ops, update.path, false)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn save_move(
     destination: LogUpdate<'_>,
     source: LogUpdate<'_>,
@@ -422,6 +470,84 @@ mod tests {
             seen: RefCell::new(vec![]),
             fail_on,
             calls: Cell::new(0),
+        }
+    }
+
+    #[test]
+    fn batch_preparation_failures_do_not_replace_any_month() {
+        for stage in [
+            Stage::WriteLog,
+            Stage::FlushLog,
+            Stage::WriteBackup,
+            Stage::FlushBackup,
+            Stage::ReplaceBackup,
+            Stage::FlushBackupDirectory,
+            Stage::FlushBackupParent,
+        ] {
+            for fail_on in 1..=3 {
+                let temp = tempfile::tempdir().unwrap();
+                let paths =
+                    ["2026-08.md", "2026-09.md", "2026-10.md"].map(|name| temp.path().join(name));
+                for path in &paths {
+                    fs::write(path, "original\n").unwrap();
+                }
+                let updates = paths
+                    .iter()
+                    .map(|path| LogUpdate {
+                        path,
+                        original: Some("original\n"),
+                        content: "updated\n",
+                    })
+                    .collect::<Vec<_>>();
+                let ops = fault_on(stage, fail_on);
+                assert!(save_batch_with(&ops, &updates).is_err());
+                for path in &paths {
+                    assert_eq!(fs::read_to_string(path).unwrap(), "original\n");
+                }
+                assert!(!ops.seen.borrow().contains(&Stage::ReplaceLog));
+            }
+        }
+    }
+
+    #[test]
+    fn interrupted_batch_replacements_report_partial_completion_and_keep_backups() {
+        for (stage, fail_on, saved) in [(Stage::ReplaceLog, 2, 1), (Stage::FlushLogDirectory, 2, 2)]
+        {
+            let temp = tempfile::tempdir().unwrap();
+            let paths =
+                ["2026-08.md", "2026-09.md", "2026-10.md"].map(|name| temp.path().join(name));
+            for path in &paths {
+                fs::write(path, "original\n").unwrap();
+            }
+            let updates = paths
+                .iter()
+                .map(|path| LogUpdate {
+                    path,
+                    original: Some("original\n"),
+                    content: "updated\n",
+                })
+                .collect::<Vec<_>>();
+            let ops = fault_on(stage, fail_on);
+            let error = format!("{:#}", save_batch_with(&ops, &updates).unwrap_err());
+            assert!(error.contains("Batch update may be partially applied"));
+            assert!(error.contains("Inspect all affected files before retrying"));
+            for (index, path) in paths.iter().enumerate() {
+                assert!(error.contains(&path.display().to_string()));
+                assert_eq!(
+                    fs::read_to_string(path).unwrap(),
+                    if index < saved {
+                        "updated\n"
+                    } else {
+                        "original\n"
+                    }
+                );
+                let backup = temp.path().join("backups").join(format!(
+                    "{}.000001.bak",
+                    path.file_name().unwrap().to_str().unwrap()
+                ));
+                assert_eq!(fs::read_to_string(backup).unwrap(), "original\n");
+            }
+            assert!(!ops.seen.borrow().contains(&Stage::PruneBackup));
         }
     }
 

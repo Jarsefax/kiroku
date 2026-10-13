@@ -56,9 +56,52 @@ day. Use `krk new-day` to start subsequent days and move unfinished work forward
 
 All status commands can move an item from any section. Titles must be
 nonempty, single-line text; Unicode and duplicate titles are supported.
-`todo`, `doing`, and `done` treat an argument containing only ASCII digits as an item number,
-even when quoted; all other text is a new title. Invalid item numbers produce
-an error. Quote titles containing spaces.
+`todo`, `doing`, and `done` treat numeric arguments, ranges, and comma-separated
+numbers as item selections, even when quoted; other text is a new title.
+Invalid selections produce an error. Quote titles containing spaces.
+
+### Selecting multiple items
+
+Commands that accept an item number also accept inclusive ranges (`1-3`),
+comma-separated numbers (`1,3`), and mixtures (`1-3,7`). This works with
+`remove`, `move`, `todo`, `doing`, `done`, `repeat`, and `edit`, plus the
+`--remove` and `--repeat` options on lists and searches:
+
+```sh
+krk remove 1-3
+krk remove 1,3
+krk move 2-4 up
+krk move 1,3 down --steps 2
+krk done 1-3,7
+krk repeat 1,3 --position 1
+krk list month --status done --remove 1-3,5
+krk search "meeting" --repeat 1,3
+```
+
+Numbers always refer to the original listing, before any selected item is
+changed. Selections run in ascending number order; repeats and overlapping
+ranges select an occurrence only once. Duplicate titles remain separate
+items. Every selection is validated before saving, so an invalid number
+aborts the whole command. Each affected monthly file is saved once, with
+the usual backup. Across several months, all files and backups are prepared
+before any replacement; if a later write fails, the error identifies the
+files to inspect before retrying.
+
+`move` preserves the relative order of selected items and of unselected
+items. Each selected item moves up to `--steps` positions within its own
+section, stopping at its boundary or another selected item. Status moves
+and copies insert selected items in their original number order;
+`--position` specifies the beginning of the inserted block, after removing
+the selected source entries when moving. Status moves without `--position`
+leave items already in the requested section where they are.
+`edit 1,3 "title"` gives both selected items the same title.
+
+With `--from`, historical letters support the same syntax (`A-C,E`), including
+labels past Z. For example, `krk repeat A-C,E --from 2026-10-02` copies those
+four historical items. Standalone editing commands use active-day item
+numbers; list/search options use the bracketed result numbers from that
+same period and filters. Purely numeric text containing commas or hyphens
+is reserved for selections on the status commands.
 
 ### Short commands
 
