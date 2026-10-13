@@ -274,11 +274,11 @@ pub fn render_styled(
         if is_active && (!result_numbers || editable_numbers) {
             labels.push("active — numbers are editable");
         } else if is_active {
-            labels.push("active — result numbers are for copying");
+            labels.push("active — result numbers are for copying or removal");
         } else if result_numbers && day.date > today {
-            labels.push("future — result numbers are for copying");
+            labels.push("future — result numbers are for copying or removal");
         } else if result_numbers {
-            labels.push("history — result numbers are for copying");
+            labels.push("history — result numbers are for copying or removal");
         } else if day.date > today && filter.is_some() {
             labels.push("future — letters scoped to this date");
         } else if day.date > today {
@@ -332,7 +332,7 @@ pub fn render_styled(
         output.push('\n');
     }
     if result_numbers && result_number > 0 {
-        let _ = writeln!(output, "{}", style.muted("Append `--repeat N` to this command to copy result [N] into active To do. Results are recomputed on each run."));
+        let _ = writeln!(output, "{}", style.muted("Append `--repeat N` to copy result [N] into active To do, or `--remove N` to remove it from its recorded day. Results are recomputed on each run."));
     }
     if result_numbers && result_number > 0 && !editable_numbers {
         let _ = writeln!(

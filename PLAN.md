@@ -10,6 +10,9 @@ meeting" or "monthly op meeting - september".
 
 - Provide both a CLI and a TUI with keyboard navigation.
 - The app is called Kiroku; its executable and command are named `krk`.
+- Increase the app version with every completed change to the tool: minor
+  for features, patch for fixes or maintenance. Keep `Cargo.toml` and
+  `Cargo.lock` in sync and verify the rebuilt executable's `--version`.
 - Distribute an independent native executable, without requiring a separately
   installed interpreter or language runtime.
 - Prioritize fast startup, low memory use, and responsive navigation.
@@ -148,8 +151,9 @@ These defaults were adopted for the first implementation.
   title substrings ignoring case. Both support `--status todo|doing|done`;
   `list --status` also works without text. With no period, filters search
   all recorded days. Explicit periods restrict dates without fallback.
-  Results are read-only and preserve original active-day numbers and
-  date-scoped historical letters so `repeat` can copy matches directly.
+  Without a result action, searches and filtered lists are read-only.
+  Original active-day numbers and date-scoped historical letters remain
+  available to the separate `repeat` command.
 - CLI search and list rows also have bracketed result numbers across all
   displayed days. Appending `--repeat RESULT_NUMBER` to the same command
   copies that result into active To do and prints the source and updated
@@ -158,6 +162,14 @@ These defaults were adopted for the first implementation.
   make no changes; copying never starts a day. Results are recomputed on
   each run, so numbers can refer to different entries after log or date
   changes. Original source labels remain available for separate commands.
+- Appending `--remove RESULT_NUMBER` (short form `-x`) to the same list or
+  search command removes exactly that result from its recorded source date,
+  including history and future plans. Require a matching source snapshot
+  under the directory lock before saving. Retain other months' backups.
+  Print the removed source date/title and refresh the same period and filters
+  with updated result numbers. Invalid results make no changes; removal never
+  starts a day. Reject combinations with `--repeat`, `--date`, or `--position`.
+  The separate `krk remove NUMBER` remains scoped to the active day.
 - TUI `/` prompts for a search across all recorded days. Results list the
   date, original label, status, and title, newest day first. Navigation
   selects matches; `f` cycles all/Done/To do/Doing, `/` refines the query,

@@ -728,6 +728,42 @@ impl Store {
         Ok(document.days[day_index].clone())
     }
 
+    /// Remove one item from a recorded date without changing the active day.
+    /// Numbers are one-based within that date; a snapshot guards the selection.
+    pub fn remove_on_date(
+        &self,
+        date: NaiveDate,
+        number: usize,
+        expected_source: Option<&Day>,
+    ) -> Result<Day> {
+        let _lock = self.lock()?;
+        let path = self.dir.join(format!("{}.md", date.format("%Y-%m")));
+        let mut document = Document::read_or_empty(path)?;
+        let index = document
+            .days
+            .iter()
+            .position(|day| day.date == date)
+            .with_context(|| format!("No recorded day for {date}"))?;
+        let day = &document.days[index];
+        if let Some(expected) = expected_source {
+            ensure!(
+                day.matches(expected),
+                "The source day changed outside this view. Rerun the search or listing before removing"
+            );
+        }
+        let line = day
+            .numbered()
+            .get(number.wrapping_sub(1))
+            .copied()
+            .with_context(|| format!("No source item {number} on {date}"))?
+            .line;
+        document.lines.remove(line);
+        document.reparse()?;
+        // Removing from history or a future plan does not close other months.
+        document.save(false)?;
+        Ok(document.days[index].clone())
+    }
+
     /// Add to an explicit date, creating an empty day without rollover.
     pub fn add_on_date(&self, date: NaiveDate, title: &str, status: Status) -> Result<Day> {
         self.add_on_date_at(date, title, status, None)

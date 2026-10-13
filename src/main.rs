@@ -87,7 +87,7 @@ struct StatusTarget {
 }
 
 #[derive(clap::Args)]
-struct CopyResult {
+struct ResultAction {
     #[arg(
         short,
         long,
@@ -103,6 +103,14 @@ struct CopyResult {
         help = "Copy the numbered result into To do; results are recomputed on this run"
     )]
     repeat: Option<usize>,
+    #[arg(
+        short = 'x',
+        long,
+        conflicts_with_all = ["repeat", "date", "position"],
+        value_name = "RESULT_NUMBER",
+        help = "Remove the numbered result from its recorded day; results are recomputed on this run"
+    )]
+    remove: Option<usize>,
     #[arg(short, long, requires = "repeat", value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Copy to this date instead of the active day (requires --repeat)")]
     date: Option<NaiveDate>,
 }
@@ -135,7 +143,7 @@ enum Command {
         )]
         status: Option<CliStatus>,
         #[command(flatten)]
-        copy: CopyResult,
+        action: ResultAction,
     },
     /// Search titles across all recorded days, or within a selected period
     #[command(visible_alias = "s")]
@@ -150,7 +158,7 @@ enum Command {
         #[arg(short, long, value_enum)]
         status: Option<CliStatus>,
         #[command(flatten)]
-        copy: CopyResult,
+        action: ResultAction,
     },
     /// Add a title, or move an item into Doing, optionally on another date
     #[command(visible_alias = "do")]
@@ -308,33 +316,53 @@ fn filtered_list(
     period: Option<&str>,
     query: &str,
     status: Option<CliStatus>,
-    copy: CopyResult,
+    action: ResultAction,
     today: chrono::NaiveDate,
     style: Style,
 ) -> Result<()> {
     let filter = listing::Filter::new(query, status.map(Into::into))?;
-    let view = listing::select_filtered(store, period, today, &filter)?;
-    show_or_repeat(store, view, Some(&filter), copy, today, style)
+    show_or_change(store, period, Some(&filter), action, today, style)
 }
 
-fn show_or_repeat(
+fn show_or_change(
     store: &Store,
-    view: View,
+    period: Option<&str>,
     filter: Option<&listing::Filter>,
-    copy: CopyResult,
+    action: ResultAction,
     today: chrono::NaiveDate,
     style: Style,
 ) -> Result<()> {
-    if let Some(result) = copy.repeat {
+    let select = || match filter {
+        Some(filter) => listing::select_filtered(store, period, today, filter),
+        None => listing::select(store, period, today),
+    };
+    let view = select()?;
+    if let Some(result) = action.remove {
         let (source, number) = view.result(result, filter)?;
-        if let Some(date) = copy.date {
+        store.remove_on_date(source.date, number, Some(source))?;
+        output(&format!(
+            "Removed result {result} from {}: {}\n\n",
+            style.heading(&source.date.to_string()),
+            source.numbered()[number - 1].title
+        ))?;
+        return output(&listing::render_styled(
+            &select()?,
+            today,
+            filter,
+            true,
+            style,
+        ));
+    }
+    if let Some(result) = action.repeat {
+        let (source, number) = view.result(result, filter)?;
+        if let Some(date) = action.date {
             let day = store.repeat_on_date_at(
                 date,
                 Some(source.date),
                 number,
                 Status::Todo,
                 Some(source),
-                copy.position.map(|n| n.get()),
+                action.position.map(|n| n.get()),
             )?;
             output(&format!(
                 "Repeated result {result} from {}: {}\n\n",
@@ -357,7 +385,7 @@ fn show_or_repeat(
             Status::Todo,
             Some(source),
             Some(&active),
-            copy.position.map(|n| n.get()),
+            action.position.map(|n| n.get()),
         )?;
         output(&format!(
             "Repeated result {result} from {}: {}\n\n",
@@ -379,14 +407,14 @@ fn run(args: Args, style: Style) -> Result<()> {
             query,
             period,
             status,
-            copy,
+            action,
         }) => {
             return filtered_list(
                 &store,
                 period.as_deref(),
                 &query,
                 status,
-                copy,
+                action,
                 today,
                 style,
             );
@@ -395,7 +423,7 @@ fn run(args: Args, style: Style) -> Result<()> {
             period,
             search,
             status,
-            copy,
+            action,
         }) => {
             if search.is_some() || status.is_some() {
                 return filtered_list(
@@ -403,19 +431,12 @@ fn run(args: Args, style: Style) -> Result<()> {
                     period.as_deref(),
                     search.as_deref().unwrap_or(""),
                     status,
-                    copy,
+                    action,
                     today,
                     style,
                 );
             }
-            return show_or_repeat(
-                &store,
-                listing::select(&store, period.as_deref(), today)?,
-                None,
-                copy,
-                today,
-                style,
-            );
+            return show_or_change(&store, period.as_deref(), None, action, today, style);
         }
         Some(Command::NewDay) => {
             let created = store.new_day(today)?;

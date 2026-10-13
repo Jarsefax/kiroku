@@ -38,6 +38,8 @@ day. Use `krk new-day` to start subsequent days and move unfinished work forward
 | `krk list [PERIOD] --status STATUS` | List items with the selected status; searches all history without PERIOD |
 | `krk search "text" [PERIOD] --repeat RESULT_NUMBER` | Copy one search result into active To do |
 | `krk list [PERIOD] --repeat RESULT_NUMBER` | Copy one listed result into active To do; works with search/status filters |
+| `krk list [PERIOD] --remove RESULT_NUMBER` | Remove one listed result from its recorded day; works with search/status filters |
+| `krk search "text" [PERIOD] --remove RESULT_NUMBER` | Remove one search result from its recorded day |
 | `krk doing NUMBER` | Move an active-day item into Doing |
 | `krk doing "title"` | Add an item directly to Doing |
 | `krk done NUMBER` | Move an active-day item into Done |
@@ -89,6 +91,7 @@ after the command; other options apply to the commands that support them.
 | `--position` | `-p` |
 | `--date` | `-d` |
 | `--repeat` | `-r` |
+| `--remove` | `-x` |
 | `--from` | `-f` |
 | `--status` | `-s` |
 | `--search` | `-S` |
@@ -244,8 +247,8 @@ and the most recent earlier record. Output always labels dates and the active
 day. CLI listings use bracketed result numbers across the displayed days.
 Updated active-day output and the TUI use bracketed item numbers; historical
 TUI views use bracketed letters (`[A]`…`[Z]`, `[AA]`, etc.). Item titles align
-even when labels have different lengths. Historical entries cannot be edited;
-use `--repeat N` on a listing or search to copy one.
+even when labels have different lengths. Use `--repeat N` on a listing or
+search to copy a historical entry, or `--remove N` to delete it.
 
 ### Listing dates
 
@@ -286,8 +289,9 @@ sections without matches. Every CLI search or listing gives each entry a
 result number in brackets: `[1]`, `[2]`, etc., counted across all displayed
 days. Each entry shows just one label, for example `[2] weekly meeting`.
 Titles line up across single- and multi-digit labels. Repeated titles remain
-separate occurrences. Search and multi-day result numbers select copies;
-run `krk list` without filters to get active-day item numbers for edits.
+separate occurrences. Search and multi-day result numbers select entries
+for `--repeat` and `--remove`; run `krk list` without filters to get active-day
+item numbers for the separate editing and status commands.
 
 To reuse a result, arrow up in your terminal to recall the same command and
 append `--repeat N`, using the bracketed result number:
@@ -309,12 +313,30 @@ changes. The separate `krk repeat` command uses an active-day item number
 or a date-scoped historical letter. These can differ from search or multi-day
 result numbers.
 
+To remove a result, recall the same command and append `--remove N` (or
+`-x N`), using its bracketed result number:
+
+```sh
+krk list month --status done
+krk list month --status done --remove 2
+krk list --remove 3
+krk search "meeting" --remove 1
+```
+
+Removal is immediate and deletes exactly that occurrence from its source
+date, including historical or future dates. It prints the removed title and
+date, then refreshes the same listing or search with updated result numbers.
+It never starts a day. `--remove` cannot be combined with `--repeat`, `--date`,
+or `--position`; the listing's period and filters select the source.
+Invalid result numbers leave logs unchanged. The separate `krk remove NUMBER`
+command continues to use active-day item numbers.
+
 Results are recomputed every time the command runs. If log contents, filters,
 or relative dates change between runs, the same result number may select a
 different entry. Start today before your initial search if you want copies
-to go into today. Without `--repeat`, searches and listings are read-only
-and never start a day or change log files. With `--repeat`, they create a
-missing day only when an explicit `--date` destination is supplied.
+to go into today. Without `--repeat` or `--remove`, searches and listings are
+read-only and never start a day or change log files. With `--repeat`, they
+create a missing day only when an explicit `--date` destination is supplied.
 
 The separate repeat command remains available to copy a historical result
 into today using its source date and letter:
@@ -634,7 +656,7 @@ legacy and versioned logs, unsupported-format protection, malformed-file
 protection, stale selections, concurrent writes, configuration,
 date-targeted additions, moves, and copies with chronological insertion,
 CLI workflows, search/filter references and copying results into today,
-numbered search/list results with `--repeat`, repeating items across
+numbered search/list results with `--repeat` and `--remove`, repeating items across
 days/months, title suggestions, and TUI
 keyboard/render behavior. Save tests inject partial
 writes, file/directory flush failures, replacement failures, and backup

@@ -815,6 +815,194 @@ fn repeat_option_copies_search_and_list_results_into_todo() {
 }
 
 #[test]
+fn remove_option_uses_displayed_results_and_refreshes_the_same_listing() {
+    for (args, result, source, number) in [
+        (&["list"][..], "2", "2026-10-02", 2),
+        (&["list", "2026-09-30"][..], "3", "2026-09-30", 3),
+        (
+            &["list", "2026-09-30..2026-10-02"][..],
+            "3",
+            "2026-09-30",
+            3,
+        ),
+        (&["list", "--search", "duplicate"][..], "2", "2026-09-30", 3),
+        (&["list", "--status", "done"][..], "1", "2026-09-30", 3),
+        (
+            &[
+                "list",
+                "2026-09-30",
+                "--search",
+                "duplicate",
+                "--status",
+                "done",
+            ][..],
+            "1",
+            "2026-09-30",
+            3,
+        ),
+        (&["search", "duplicate"][..], "2", "2026-09-30", 3),
+        (
+            &["search", "current", "--status", "doing"][..],
+            "1",
+            "2026-10-02",
+            2,
+        ),
+        (&["l", "-s", "done"][..], "2", "2026-10-02", 3),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let logs = temp.path();
+        fs::write(
+            logs.join("2026-09.md"),
+            "# 2026-09-30\n\n## To do\n- duplicate\n\n## Doing\n- unrelated\n\n## Done\n- duplicate\n",
+        )
+        .unwrap();
+        fs::write(
+            logs.join("2026-10.md"),
+            "# 2026-10-02\n\n## To do\n- current todo\n\n## Doing\n- current meeting\n\n## Done\n- current done\n",
+        )
+        .unwrap();
+        let store = Store::new(logs.to_path_buf());
+        let snapshot = || {
+            store
+                .days(None)
+                .unwrap()
+                .into_iter()
+                .map(|day| {
+                    (
+                        day.date,
+                        day.numbered()
+                            .iter()
+                            .map(|item| (item.title.clone(), item.status))
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut expected = snapshot();
+        let source_date = parse_date(source).unwrap();
+        let (_, items) = expected
+            .iter_mut()
+            .find(|(date, _)| *date == source_date)
+            .unwrap();
+        let (title, _) = items.remove(number - 1);
+        let listed = success(logs, args);
+        assert!(
+            listed
+                .lines()
+                .any(|line| { line.trim_start() == format!("[{result}] {title}") })
+        );
+        assert!(listed.contains("--remove N"));
+        let mut with_remove = args.to_vec();
+        with_remove.extend(["-x", result]);
+        let output = success(logs, &with_remove);
+        assert!(output.starts_with(&format!(
+            "Removed result {result} from {source}: {title}\n\n"
+        )));
+        assert_eq!(snapshot(), expected, "{args:?}");
+        assert!(output.ends_with(&success(logs, args)));
+        assert_eq!(
+            store.active().unwrap().unwrap().date.to_string(),
+            "2026-10-02"
+        );
+    }
+}
+
+#[test]
+fn remove_option_refreshes_empty_results_and_plain_list_fallback() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    let yesterday = (Local::now().date_naive() - chrono::Duration::days(1)).to_string();
+    success(logs, &["done", "earlier item", "--date", &yesterday]);
+    success(logs, &["new-day"]);
+    success(logs, &["todo", "only current item"]);
+    let output = success(logs, &["list", "--remove", "1"]);
+    assert!(output.contains("Today is empty; also showing the previous recorded day"));
+    assert!(output.contains("[1] earlier item"));
+    assert!(output.ends_with(&success(logs, &["list"])));
+    let output = success(logs, &["list", "--status", "done", "--remove", "1"]);
+    assert!(output.contains("No matching items."));
+    assert!(!output.contains("[1] earlier item"));
+    assert!(output.ends_with(&success(logs, &["list", "--status", "done"])));
+    assert!(
+        Store::new(logs.to_path_buf())
+            .days(None)
+            .unwrap()
+            .iter()
+            .all(|day| day.items.is_empty())
+    );
+}
+
+#[test]
+fn remove_option_can_remove_future_results_without_an_active_day() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    let future = (Local::now().date_naive() + chrono::Duration::days(40)).to_string();
+    success(logs, &["todo", "future plan", "--date", &future]);
+    let store = Store::new(logs.to_path_buf());
+    assert!(store.active().unwrap().is_none());
+    let output = success(logs, &["list", &future, "--remove", "1"]);
+    assert!(output.contains(&format!("Removed result 1 from {future}: future plan")));
+    assert!(store.active().unwrap().is_none());
+    assert_eq!(store.days(None).unwrap().len(), 1);
+    assert!(store.days(None).unwrap()[0].items.is_empty());
+}
+
+#[test]
+fn invalid_remove_options_leave_logs_and_backups_unchanged() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    success(logs, &["todo", "keep"]);
+    success(logs, &["done", "keep done"]);
+    let store = Store::new(logs.to_path_buf());
+    let path = logs.join(format!(
+        "{}.md",
+        store.active().unwrap().unwrap().date.format("%Y-%m")
+    ));
+    let before = fs::read(&path).unwrap();
+    let backups = fs::read_dir(logs.join("backups")).unwrap().count();
+    for args in [
+        &["list", "--remove"][..],
+        &["list", "--remove", "0"],
+        &["list", "--remove", "3"],
+        &["list", "--remove", "A"],
+        &["list", "--remove", "-1"],
+        &["list", "--remove", "9999999999999999999999999999999999999"],
+        &["list", "--remove", "1", "--repeat", "1"],
+        &["list", "--remove", "1", "--date", "2026-09-30"],
+        &["list", "--remove", "1", "--position", "1"],
+        &[
+            "list",
+            "--remove",
+            "1",
+            "--repeat",
+            "1",
+            "--date",
+            "2026-09-30",
+        ],
+        &["list", "--search", "absent", "--remove", "1"],
+        &[
+            "list", "--search", "keep", "--status", "doing", "--remove", "1",
+        ],
+        &["list", "2025-01-01", "--remove", "1"],
+        &["search", "keep", "--remove", "0"],
+        &["search", "absent", "--remove", "1"],
+        &["search", "keep", "--remove", "1", "--repeat", "1"],
+    ] {
+        assert!(!run(logs, args).status.success(), "{args:?}");
+        assert_eq!(fs::read(&path).unwrap(), before, "{args:?}");
+        assert_eq!(fs::read_dir(logs.join("backups")).unwrap().count(), backups);
+    }
+    for command in ["list", "search"] {
+        let help = success(logs, &[command, "--help"]);
+        assert!(help.contains("--remove"));
+        assert!(help.contains("-x"));
+    }
+    let missing = temp.path().join("missing logs");
+    assert!(!run(&missing, &["list", "--remove", "1"]).status.success());
+    assert!(!missing.exists());
+}
+
+#[test]
 fn invalid_repeat_option_does_not_write_or_repeat_all_matches() {
     let temp = tempfile::tempdir().unwrap();
     let logs = temp.path();
