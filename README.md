@@ -21,6 +21,7 @@ updated active day; use the numbers from that output for the next command.
 Numbers are unique across all three sections of the active day.
 CLI output and the TUI show only sections containing items; empty To do,
 Doing, and Done headings are omitted.
+Dates in command output include the full weekday, such as `2026-10-13 Tuesday`.
 
 Run `krk --help` or `krk COMMAND --help` for command help.
 
@@ -29,7 +30,7 @@ each listing, search, or update easy to distinguish from the previous command:
 
 ```text
 ── krk list ────────────────────────────
-2026-10-13 (today; active — numbers are editable)
+2026-10-13 Tuesday (today; active — numbers are editable)
   To do
     [1] weekly meeting
 ...

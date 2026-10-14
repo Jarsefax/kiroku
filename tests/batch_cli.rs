@@ -207,8 +207,8 @@ fn result_removals_and_copies_span_months_and_keep_display_order() {
         &store.dir,
         &["list", "--status", "done", "--remove", "3,1,1"],
     );
-    assert!(output.contains("Removed result 1 from 2026-09-30: duplicate"));
-    assert!(output.contains("Removed result 3 from 2026-10-02: duplicate"));
+    assert!(output.contains("Removed result 1 from 2026-09-30 Wednesday: duplicate"));
+    assert!(output.contains("Removed result 3 from 2026-10-02 Friday: duplicate"));
     assert_eq!(titles(&store, "2026-09-30", Status::Done), ["historical"]);
     assert_eq!(titles(&store, "2026-10-02", Status::Done), ["finished"]);
     assert!(output.contains("[1] historical"));

@@ -163,7 +163,7 @@ fn date_option_adds_all_statuses_and_keeps_older_dates_out_of_the_active_day() {
     let logs = temp.path();
     let store = Store::new(logs.to_path_buf());
     let first = success(logs, &["todo", "weekly meeting", "--date", "2026-10-06"]);
-    assert!(first.contains("Updated 2026-10-06."));
+    assert!(first.contains("Updated 2026-10-06 Tuesday."));
     assert!(first.contains("- weekly meeting"));
     success(logs, &["doing", "--date", "2026-10-06", "möte 日本語"]);
     success(logs, &["done", "backfill", "--date", "2026-09-30"]);
@@ -274,7 +274,7 @@ fn date_option_copies_active_items_historical_items_and_numbered_results() {
             "2026-10-06",
         ],
     );
-    assert!(output.contains("Updated 2026-10-06."));
+    assert!(output.contains("Updated 2026-10-06 Tuesday."));
     assert_eq!(store.active().unwrap().unwrap().items.len(), 2);
 }
 
@@ -427,7 +427,7 @@ fn status_commands_move_items_to_dates_sections_and_positions() {
             logs,
             &[command, "2", "--date", "2026-09-30", "--position", "1"],
         );
-        assert!(output.contains("Updated 2026-09-30."));
+        assert!(output.contains("Updated 2026-09-30 Wednesday."));
         assert!(output.contains("- duplicate 日本語"));
         assert!(!output.contains("[1]"));
         let store = Store::new(logs.to_path_buf());
@@ -922,7 +922,8 @@ fn remove_option_uses_displayed_results_and_refreshes_the_same_listing() {
         with_remove.extend(["-x", result]);
         let output = success(logs, &with_remove);
         assert!(output.starts_with(&format!(
-            "Removed result {result} from {source}: {title}\n\n"
+            "Removed result {result} from {}: {title}\n\n",
+            source_date.format("%Y-%m-%d %A")
         )));
         assert_eq!(snapshot(), expected, "{args:?}");
         assert!(output.ends_with(&success(logs, args)));
@@ -967,7 +968,10 @@ fn remove_option_can_remove_future_results_without_an_active_day() {
     let store = Store::new(logs.to_path_buf());
     assert!(store.active().unwrap().is_none());
     let output = success(logs, &["list", &future, "--remove", "1"]);
-    assert!(output.contains(&format!("Removed result 1 from {future}: future plan")));
+    assert!(output.contains(&format!(
+        "Removed result 1 from {}: future plan",
+        parse_date(&future).unwrap().format("%Y-%m-%d %A")
+    )));
     assert!(store.active().unwrap().is_none());
     assert_eq!(store.days(None).unwrap().len(), 1);
     assert!(store.days(None).unwrap()[0].items.is_empty());

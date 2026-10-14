@@ -76,7 +76,7 @@ pub fn select_filtered(
         format!("{count} matching {noun}.")
     };
     if let Some(active) = active {
-        let _ = write!(notice, "\nCopies go to active day {active}.");
+        let _ = write!(notice, "\nCopies go to active day {}.", format_date(active));
         if active != today {
             notice.push_str(" Run `krk new-day` to make today active.");
         }
@@ -159,11 +159,15 @@ pub fn select(store: &Store, selector: Option<&str>, today: NaiveDate) -> Result
             notice = String::new();
         }
     } else if let Some(day) = active_day {
-        notice = format!("Today ({today}) has not been started; showing the last recorded day.");
+        notice = format!(
+            "Today ({}) has not been started; showing the last recorded day.",
+            format_date(today)
+        );
         days.push(day);
     } else {
         notice = format!(
-            "No recorded days on or before today. Today ({today}) has not been started. Run `krk new-day` to start."
+            "No recorded days on or before today. Today ({}) has not been started. Run `krk new-day` to start.",
+            format_date(today)
         );
     }
     Ok(View {
@@ -202,6 +206,11 @@ pub fn letter_number(label: &str) -> Result<usize> {
 /// Right-align a bracketed item identifier before applying terminal styling.
 pub fn item_label(label: &str, width: usize) -> String {
     format!("{:>width$}", format!("[{label}]"), width = width + 2)
+}
+
+/// Include the full weekday alongside dates in command output.
+pub fn format_date(date: NaiveDate) -> String {
+    date.format("%Y-%m-%d %A").to_string()
 }
 
 pub fn render(view: &View, today: NaiveDate) -> String {
@@ -291,7 +300,7 @@ pub fn render_styled(
         let _ = writeln!(
             output,
             "{} {}",
-            style.heading(&day.date.to_string()),
+            style.heading(&format_date(day.date)),
             style.muted(&format!("({})", labels.join("; ")))
         );
         for status in Status::ALL {

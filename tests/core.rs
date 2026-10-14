@@ -506,8 +506,8 @@ fn empty_today_includes_previous_record_with_historical_letters() {
     let view = listing::select(&store, None, date("2026-10-05")).unwrap();
     assert_eq!(view.days.len(), 2);
     let rendered = listing::render(&view, date("2026-10-05"));
-    assert!(rendered.contains("2026-10-05 (today; active"));
-    assert!(rendered.contains("2026-10-02 (history"));
+    assert!(rendered.contains("2026-10-05 Monday (today; active"));
+    assert!(rendered.contains("2026-10-02 Friday (history"));
     assert!(rendered.contains("[A] finished"));
     assert!(store.change(Change::Remove(1), None).is_err());
     assert!(

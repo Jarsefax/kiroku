@@ -436,7 +436,10 @@ fn updated(day: Day, today: chrono::NaiveDate, out: &mut CommandOutput) -> Resul
 fn updated_date(day: Day, out: &mut CommandOutput) -> Result<()> {
     let style = out.style;
     // A targeted update must not advertise historical items as active-day numbers.
-    let mut text = format!("{}\n\n", style.heading(&format!("Updated {}.", day.date)));
+    let mut text = format!(
+        "{}\n\n",
+        style.heading(&format!("Updated {}.", listing::format_date(day.date)))
+    );
     for status in Status::ALL {
         let mut items = day
             .items
@@ -505,7 +508,7 @@ fn show_or_change(
             for &(result, source, number) in &results {
                 out.write(&format!(
                     "Removed result {result} from {}: {}\n",
-                    style.heading(&source.date.to_string()),
+                    style.heading(&listing::format_date(source.date)),
                     source.numbered()[number - 1].title
                 ))?;
             }
@@ -538,7 +541,7 @@ fn show_or_change(
         for &(result, source, number) in &results {
             out.write(&format!(
                 "Repeated result {result} from {}: {}\n",
-                style.heading(&source.date.to_string()),
+                style.heading(&listing::format_date(source.date)),
                 source.numbered()[number - 1].title
             ))?;
         }
@@ -614,7 +617,7 @@ fn run_command(args: Args, out: &mut CommandOutput) -> Result<()> {
             let created = store.new_day(today)?;
             out.write(&format!(
                 "{}: {}\n\n",
-                style.heading(&today.to_string()),
+                style.heading(&listing::format_date(today)),
                 if created {
                     "day started"
                 } else {
