@@ -301,13 +301,10 @@ pub fn render_styled(
                 .enumerate()
                 .filter(|(_, item)| item.status == status && filter.is_none_or(|f| f.matches(item)))
                 .collect();
-            if filter.is_some() && items.is_empty() {
+            if items.is_empty() {
                 continue;
             }
             let _ = writeln!(output, "  {}", style.status(status.label(), status));
-            if items.is_empty() {
-                let _ = writeln!(output, "    {}", style.muted("(empty)"));
-            }
             for (index, item) in items {
                 let label = if result_numbers {
                     result_number += 1;

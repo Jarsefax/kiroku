@@ -438,14 +438,17 @@ fn updated_date(day: Day, out: &mut CommandOutput) -> Result<()> {
     // A targeted update must not advertise historical items as active-day numbers.
     let mut text = format!("{}\n\n", style.heading(&format!("Updated {}.", day.date)));
     for status in Status::ALL {
-        text.push_str(&format!("  {}\n", style.status(status.label(), status)));
-        let mut empty = true;
-        for item in day.items.iter().filter(|item| item.status == status) {
-            text.push_str(&format!("    - {}\n", item.title));
-            empty = false;
+        let mut items = day
+            .items
+            .iter()
+            .filter(|item| item.status == status)
+            .peekable();
+        if items.peek().is_none() {
+            continue;
         }
-        if empty {
-            text.push_str(&format!("    {}\n", style.muted("(empty)")));
+        text.push_str(&format!("  {}\n", style.status(status.label(), status)));
+        for item in items {
+            text.push_str(&format!("    - {}\n", item.title));
         }
     }
     out.write(&text)

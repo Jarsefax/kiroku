@@ -38,6 +38,7 @@ meeting" or "monthly op meeting - september".
   as within a file, preserving the source day's record.
 - Group items by day/date. Individual items have no timestamps.
 - Each day has three sections: To do, Doing, and Done.
+- CLI output and the TUI omit empty status sections and their headings.
 - Start a new day only through an explicit command. Opening the app or
   crossing midnight does not start a new day automatically.
 - Exception: when no active day exists, adding a title creates today and

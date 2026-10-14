@@ -679,20 +679,20 @@ impl App {
             };
             let mut index = 0;
             for status in Status::ALL {
-                rows.push(ListItem::new(Line::from(Span::styled(
-                    status.label(),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ))));
                 let items: Vec<_> = day
                     .numbered()
                     .into_iter()
                     .filter(|i| i.status == status)
                     .collect();
                 if items.is_empty() {
-                    rows.push(ListItem::new("  (empty)"));
+                    continue;
                 }
+                rows.push(ListItem::new(Line::from(Span::styled(
+                    status.label(),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ))));
                 for item in items {
                     if index == self.selected {
                         selected_row = Some(rows.len());

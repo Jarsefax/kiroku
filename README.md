@@ -19,6 +19,8 @@ krk
 Item numbers can change after moves or removals. Default changes print the
 updated active day; use the numbers from that output for the next command.
 Numbers are unique across all three sections of the active day.
+CLI output and the TUI show only sections containing items; empty To do,
+Doing, and Done headings are omitted.
 
 Run `krk --help` or `krk COMMAND --help` for command help.
 
