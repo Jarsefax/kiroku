@@ -263,6 +263,11 @@ enum Command {
     /// Print the resolved log directory
     #[command(visible_alias = "p")]
     Path,
+    /// Create a default config file without replacing an existing one
+    #[command(
+        long_about = "Create a default config file at ~/.config/kiroku/config.toml, or $XDG_CONFIG_HOME/kiroku/config.toml when XDG_CONFIG_HOME is an absolute path. Includes commented recurring-todo examples. Existing files are left unchanged, and no logs are created."
+    )]
+    InitConfig,
 }
 
 impl Command {
@@ -279,6 +284,7 @@ impl Command {
             Self::Move { .. } => "move",
             Self::Remove { .. } => "remove",
             Self::Path => "path",
+            Self::InitConfig => "init-config",
         }
     }
 }
@@ -580,6 +586,19 @@ fn run(args: Args, style: Style) -> Result<()> {
 }
 
 fn run_command(args: Args, out: &mut CommandOutput) -> Result<()> {
+    // Initialization must work even when the existing configuration is invalid.
+    if matches!(args.command, Some(Command::InitConfig)) {
+        let (path, created) = config::init()?;
+        return out.write(&format!(
+            "{}: {}\n",
+            if created {
+                "Created configuration"
+            } else {
+                "Configuration already exists; left unchanged"
+            },
+            path.display()
+        ));
+    }
     let style = out.style;
     let store = Store::new(config::resolve(args.data_dir.as_deref())?);
     let store = if matches!(args.command, None | Some(Command::NewDay { .. })) {
@@ -589,6 +608,7 @@ fn run_command(args: Args, out: &mut CommandOutput) -> Result<()> {
     };
     let today = Local::now().date_naive();
     match args.command {
+        Some(Command::InitConfig) => unreachable!("handled before loading configuration"),
         None => tui::run(store),
         Some(Command::Path) => out.write(&format!("{}\n", store.dir.display())),
         Some(Command::Search {

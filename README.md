@@ -53,6 +53,7 @@ day. Use `krk new-day` to start subsequent days and move unfinished work forward
 | `krk` | Open the keyboard-driven TUI |
 | `krk new-day` | Start today with unfinished items and configured recurring todos; leave an existing today unchanged |
 | `krk new-day --skip-recurring` | Start today without adding configured recurring todos; still move unfinished work into To do |
+| `krk init-config` | Create a default config file with commented examples; preserve an existing config |
 | `krk todo "title"` | Add a todo to the active day |
 | `krk list` | Show today; if empty, also show the previous recorded day |
 | `krk search "text" [PERIOD]` | Search titles across all recorded days, or a selected period |
@@ -648,6 +649,20 @@ Optional settings live in **`~/.config/kiroku/config.toml`**, or
 `$XDG_CONFIG_HOME/kiroku/config.toml` when that variable is an absolute path.
 No config file is required.
 
+Create a default configuration with:
+
+```sh
+krk init-config
+```
+
+The command creates the configuration directory if needed and prints the file
+path. It sets the default log directory and includes commented `foo`/`bar`
+recurring-todo examples to edit and uncomment. Recurring todos are disabled
+until you enable those entries. Existing configuration files are left unchanged,
+even if invalid. The command creates no logs, and `--data-dir` does not change
+the configuration file location or its defaults. `krk init-config --help`
+also explains the location and behavior.
+
 ```toml
 data_dir = "~/Documents/kiroku"
 ```
@@ -766,6 +781,7 @@ date selection and list fallback, manual comments and CRLF preservation,
 legacy and versioned logs, unsupported-format protection, malformed-file
 protection, stale selections, concurrent writes, configuration,
 weekday-specific recurring todos in the CLI and TUI,
+default configuration creation without overwriting existing files,
 date-targeted additions, moves, and copies with chronological insertion,
 CLI workflows, search/filter references and copying results into today,
 numbered search/list results with `--repeat` and `--remove`, repeating items across

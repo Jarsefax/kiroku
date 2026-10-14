@@ -22,6 +22,10 @@ meeting" or "monthly op meeting - september".
 - Store optional configuration in `~/.config/kiroku/config.toml`, or
   `$XDG_CONFIG_HOME/kiroku/config.toml` when `XDG_CONFIG_HOME` is set.
   Without a configuration file, use the defaults.
+- `krk init-config` creates a default config with commented recurring-todo
+  examples at the normal configuration location, creating parent directories
+  when needed. Print the path, preserve existing files without parsing them,
+  and create no logs. Keep examples inactive until explicitly uncommented.
 - A `data_dir` setting selects a persistent custom data directory, supporting
   a home-relative value such as `data_dir = "~/Documents/kiroku"`.
 - `--data-dir PATH` overrides the configured directory for that invocation.

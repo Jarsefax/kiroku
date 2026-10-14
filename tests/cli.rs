@@ -44,6 +44,86 @@ fn without_ansi(text: &str) -> String {
 }
 
 #[test]
+fn init_config_uses_the_standard_config_location_without_creating_logs() {
+    for xdg in [None, Some("absolute"), Some("relative")] {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let xdg_path = match xdg {
+            Some("absolute") => Some(temp.path().join("custom config")),
+            Some("relative") => Some("relative-config".into()),
+            _ => None,
+        };
+        let config_dir = xdg_path
+            .as_ref()
+            .filter(|path: &&std::path::PathBuf| path.is_absolute())
+            .cloned()
+            .unwrap_or_else(|| home.join(".config"));
+        let config_path = config_dir.join("kiroku/config.toml");
+        let logs = temp.path().join("overridden-logs");
+        let invoke = |args: &[&str]| {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_krk"));
+            command
+                .current_dir(temp.path())
+                .env("HOME", &home)
+                .env_remove("XDG_CONFIG_HOME");
+            if let Some(path) = &xdg_path {
+                command.env("XDG_CONFIG_HOME", path);
+            }
+            let output = command.args(args).output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap()
+        };
+        assert!(invoke(&["--help"]).contains("init-config"));
+        let help = invoke(&["init-config", "--help"]);
+        assert!(help.contains("XDG_CONFIG_HOME"));
+        assert!(help.contains("Existing files are left unchanged"));
+        assert!(!config_dir.exists());
+        let output = invoke(&["init-config", "--data-dir", logs.to_str().unwrap()]);
+        assert!(output.contains("Created configuration:"));
+        assert!(output.contains(config_path.to_str().unwrap()));
+        let original = fs::read(&config_path).unwrap();
+        assert!(invoke(&["init-config"]).contains("already exists; left unchanged"));
+        assert_eq!(fs::read(config_path).unwrap(), original);
+        assert_eq!(
+            invoke(&["path"]).trim(),
+            home.join("Documents/kiroku").to_str().unwrap()
+        );
+        assert!(!home.join("Documents/kiroku").exists());
+        assert!(!logs.exists());
+        assert!(!temp.path().join("relative-config").exists());
+    }
+}
+
+#[test]
+fn init_config_does_not_parse_or_replace_existing_invalid_configuration() {
+    let temp = tempfile::tempdir().unwrap();
+    let config_dir = temp.path().join("config");
+    let path = config_dir.join("kiroku/config.toml");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, "invalid TOML\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_krk"))
+        .arg("init-config")
+        .env("XDG_CONFIG_HOME", &config_dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("already exists; left unchanged")
+    );
+    assert_eq!(fs::read_to_string(path).unwrap(), "invalid TOML\n");
+}
+
+#[test]
 fn no_separator_is_global_and_leaves_redirected_output_unchanged() {
     let temp = tempfile::tempdir().unwrap();
     for args in [

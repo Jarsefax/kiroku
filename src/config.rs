@@ -3,8 +3,26 @@ use chrono::{Datelike, NaiveDate, Weekday};
 use serde::Deserialize;
 use std::{
     env, fs,
+    io::Write,
     path::{Path, PathBuf},
 };
+
+const DEFAULT_CONFIG: &str = r#"# Kiroku configuration
+# Choose where monthly Markdown logs are stored.
+data_dir = "~/Documents/kiroku"
+
+# Uncomment and edit these examples to add weekday-specific recurring todos.
+# Use lowercase full weekday names from monday through sunday.
+# Skip these additions once with: krk new-day --skip-recurring
+
+# [[recurring_todos]]
+# title = "foo"
+# days = ["monday", "tuesday", "thursday", "friday"]
+
+# [[recurring_todos]]
+# title = "bar"
+# days = ["wednesday"]
+"#;
 
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -102,6 +120,54 @@ fn locations() -> Result<(PathBuf, PathBuf)> {
         .filter(|p| p.is_absolute())
         .unwrap_or_else(|| home.join(".config"));
     Ok((home, config_dir))
+}
+
+/// Create a default configuration without replacing an existing file.
+/// Returns its path and whether this invocation created it.
+pub fn init() -> Result<(PathBuf, bool)> {
+    let (_, config_dir) = locations()?;
+    init_with(&config_dir)
+}
+
+pub fn init_with(config_dir: &Path) -> Result<(PathBuf, bool)> {
+    let directory = config_dir.join("kiroku");
+    let path = directory.join("config.toml");
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() || metadata.is_symlink() => return Ok((path, false)),
+        Ok(_) => bail!("{} exists but is not a configuration file", path.display()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+        Err(error) => {
+            return Err(error).with_context(|| format!("Cannot inspect {}", path.display()));
+        }
+    }
+    fs::create_dir_all(&directory)
+        .with_context(|| format!("Cannot create {}", directory.display()))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(&directory)
+        .with_context(|| format!("Cannot prepare configuration in {}", directory.display()))?;
+    temporary
+        .write_all(DEFAULT_CONFIG.as_bytes())
+        .with_context(|| format!("Cannot write configuration for {}", path.display()))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .with_context(|| format!("Cannot flush configuration for {}", path.display()))?;
+    match temporary.persist_noclobber(&path) {
+        Ok(_) => {
+            fs::File::open(&directory)
+                .and_then(|directory| directory.sync_all())
+                .with_context(|| {
+                    format!(
+                        "Created configuration at {}, but cannot flush its directory",
+                        path.display()
+                    )
+                })?;
+            Ok((path, true))
+        }
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => Ok((path, false)),
+        Err(error) => {
+            Err(error).with_context(|| format!("Cannot create configuration at {}", path.display()))
+        }
+    }
 }
 
 pub fn resolve(override_dir: Option<&Path>) -> Result<PathBuf> {
