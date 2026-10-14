@@ -124,7 +124,7 @@ struct ResultAction {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Explicitly start today and move unfinished items into its To do section
+    /// Start today with unfinished items and configured recurring todos
     #[command(visible_alias = "n")]
     NewDay,
     /// List today, a relative period, a date, or an inclusive FROM..TO range
@@ -576,6 +576,11 @@ fn run(args: Args, style: Style) -> Result<()> {
 fn run_command(args: Args, out: &mut CommandOutput) -> Result<()> {
     let style = out.style;
     let store = Store::new(config::resolve(args.data_dir.as_deref())?);
+    let store = if matches!(args.command, None | Some(Command::NewDay)) {
+        store.with_recurring_todos(config::recurring_todos()?)?
+    } else {
+        store
+    };
     let today = Local::now().date_naive();
     match args.command {
         None => tui::run(store),

@@ -1,8 +1,174 @@
-use kiroku::storage::{Status, Store, parse_date};
+use kiroku::{
+    config,
+    storage::{Status, Store, parse_date},
+};
 use std::fs;
 
 fn date(text: &str) -> chrono::NaiveDate {
     parse_date(text).unwrap()
+}
+
+fn configured_store(temp: &tempfile::TempDir, config: &str) -> Store {
+    let config_dir = temp.path().join("config");
+    fs::create_dir_all(config_dir.join("kiroku")).unwrap();
+    fs::write(config_dir.join("kiroku/config.toml"), config).unwrap();
+    Store::new(temp.path().to_path_buf())
+        .with_recurring_todos(config::recurring_todos_with(&config_dir).unwrap())
+        .unwrap()
+}
+
+const WEEKLY_TODOS: &str = r#"
+[[recurring_todos]]
+title = "foo"
+days = ["monday", "tuesday", "thursday", "friday"]
+
+[[recurring_todos]]
+title = "bar"
+days = ["wednesday"]
+"#;
+
+#[test]
+fn recurring_todos_seed_the_first_day_on_each_matching_weekday() {
+    let config = format!(
+        r#"{WEEKLY_TODOS}
+[[recurring_todos]]
+title = "weekend 日本語"
+days = ["saturday", "sunday"]
+"#
+    );
+    for (today, expected) in [
+        ("2026-10-05", "foo"),
+        ("2026-10-06", "foo"),
+        ("2026-10-07", "bar"),
+        ("2026-10-08", "foo"),
+        ("2026-10-09", "foo"),
+        ("2026-10-10", "weekend 日本語"),
+        ("2026-10-11", "weekend 日本語"),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let store = configured_store(&temp, &config);
+        assert!(store.new_day(date(today)).unwrap());
+        let days = store.days(None).unwrap();
+        assert_eq!(days.len(), 1);
+        assert_eq!(days[0].items.len(), 1, "{today}");
+        assert_eq!(days[0].items[0].title, expected, "{today}");
+        assert_eq!(days[0].items[0].status, Status::Todo);
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let store = configured_store(&temp, WEEKLY_TODOS);
+    store.new_day(date("2026-10-10")).unwrap();
+    assert!(
+        store
+            .active_on(date("2026-10-10"))
+            .unwrap()
+            .unwrap()
+            .items
+            .is_empty()
+    );
+}
+
+#[test]
+fn recurring_todos_reappear_after_completion_and_add_titles_missing_from_history() {
+    for previous in ["2026-10-01", "2026-09-30"] {
+        let temp = tempfile::tempdir().unwrap();
+        let config = format!(
+            r#"{WEEKLY_TODOS}
+[[recurring_todos]]
+title = "never recorded"
+days = ["friday"]
+"#
+        );
+        let store = configured_store(&temp, &config);
+        store
+            .add_on_date(date(previous), "foo", Status::Done)
+            .unwrap();
+        store
+            .add_on_date(date(previous), "carry", Status::Doing)
+            .unwrap();
+        store
+            .add_on_date(date("2026-10-20"), "future", Status::Todo)
+            .unwrap();
+
+        assert!(store.new_day(date("2026-10-02")).unwrap());
+        let days = store.days(None).unwrap();
+        assert_eq!(
+            days.iter().map(|day| day.date).collect::<Vec<_>>(),
+            [date(previous), date("2026-10-02"), date("2026-10-20")]
+        );
+        assert_eq!(days[0].items.len(), 1);
+        assert_eq!(days[0].items[0].title, "foo");
+        assert_eq!(days[0].items[0].status, Status::Done);
+        assert_eq!(
+            days[1]
+                .items
+                .iter()
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            ["carry", "foo", "never recorded"]
+        );
+        assert!(days[1].items.iter().all(|item| item.status == Status::Todo));
+        assert_eq!(days[2].items.len(), 1);
+        assert_eq!(days[2].items[0].title, "future");
+        let saved = fs::read(store.dir.join("2026-10.md")).unwrap();
+        assert!(!store.new_day(date("2026-10-02")).unwrap());
+        assert_eq!(fs::read(store.dir.join("2026-10.md")).unwrap(), saved);
+    }
+}
+
+#[test]
+fn recurring_todos_append_in_config_order_without_duplicating_carried_titles() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = configured_store(
+        &temp,
+        r#"
+[[recurring_todos]]
+title = "foo"
+days = ["monday", "monday"]
+[[recurring_todos]]
+title = "second"
+days = ["monday"]
+[[recurring_todos]]
+title = " foo "
+days = ["monday"]
+[[recurring_todos]]
+title = "second"
+days = ["monday"]
+[[recurring_todos]]
+title = "Foo"
+days = ["monday"]
+"#,
+    );
+    for status in [Status::Todo, Status::Todo, Status::Doing, Status::Done] {
+        store
+            .add_on_date(date("2026-10-02"), "foo", status)
+            .unwrap();
+    }
+    store.new_day(date("2026-10-05")).unwrap();
+    let days = store.days(None).unwrap();
+    assert_eq!(days[0].items.len(), 1);
+    assert_eq!(days[0].items[0].status, Status::Done);
+    assert_eq!(
+        days[1]
+            .items
+            .iter()
+            .map(|item| item.title.as_str())
+            .collect::<Vec<_>>(),
+        ["foo", "foo", "foo", "second", "Foo"]
+    );
+}
+
+#[test]
+fn recurrence_only_applies_when_new_day_creates_the_record() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = configured_store(&temp, WEEKLY_TODOS);
+    store
+        .add_on_date(date("2026-10-05"), "explicit date", Status::Todo)
+        .unwrap();
+    let path = store.dir.join("2026-10.md");
+    let original = fs::read(&path).unwrap();
+    assert!(!store.new_day(date("2026-10-05")).unwrap());
+    assert_eq!(fs::read(path).unwrap(), original);
+    assert!(!store.dir.join("backups").exists());
 }
 
 #[test]
@@ -102,7 +268,7 @@ fn cross_month_rollover_moves_only_the_latest_eligible_day_and_preserves_future_
 fn backup_failure_leaves_source_items_and_missing_today_unchanged() {
     for (source_date, today) in [("2026-10-01", "2026-10-02"), ("2026-09-30", "2026-10-02")] {
         let temp = tempfile::tempdir().unwrap();
-        let store = Store::new(temp.path().to_path_buf());
+        let store = configured_store(&temp, WEEKLY_TODOS);
         store
             .add_on_date(date(source_date), "unfinished", Status::Doing)
             .unwrap();
@@ -125,7 +291,7 @@ fn backup_failure_leaves_source_items_and_missing_today_unchanged() {
 #[test]
 fn concurrent_new_day_calls_move_items_once() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::new(temp.path().to_path_buf());
+    let store = configured_store(&temp, WEEKLY_TODOS);
     store
         .add_on_date(date("2026-09-30"), "todo", Status::Todo)
         .unwrap();
@@ -149,14 +315,14 @@ fn concurrent_new_day_calls_move_items_once() {
     let days = store.days(None).unwrap();
     assert_eq!(days[0].items.len(), 1);
     assert_eq!(days[0].items[0].status, Status::Done);
-    assert_eq!(days[1].items.len(), 2);
+    assert_eq!(days[1].items.len(), 3);
     assert_eq!(
         days[1]
             .items
             .iter()
             .map(|item| item.title.as_str())
             .collect::<Vec<_>>(),
-        ["todo", "doing"]
+        ["todo", "doing", "foo"]
     );
 }
 

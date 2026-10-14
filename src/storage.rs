@@ -1,3 +1,4 @@
+use crate::config::RecurringTodo;
 use anyhow::{Context, Result, bail, ensure};
 use chrono::{Datelike, Local, NaiveDate};
 use fs2::FileExt;
@@ -543,6 +544,7 @@ impl Direction {
 #[derive(Clone)]
 pub struct Store {
     pub dir: PathBuf,
+    recurring_todos: Vec<RecurringTodo>,
 }
 
 struct SelectedDocuments {
@@ -552,7 +554,18 @@ struct SelectedDocuments {
 
 impl Store {
     pub fn new(dir: PathBuf) -> Self {
-        Self { dir }
+        Self {
+            dir,
+            recurring_todos: vec![],
+        }
+    }
+
+    pub fn with_recurring_todos(mut self, mut todos: Vec<RecurringTodo>) -> Result<Self> {
+        for todo in &mut todos {
+            todo.validate()?;
+        }
+        self.recurring_todos = todos;
+        Ok(self)
     }
 
     fn paths(&self) -> Result<Vec<PathBuf>> {
@@ -691,6 +704,19 @@ impl Store {
                     .collect()
             })
             .unwrap_or_default();
+        // Keep all carried entries (including duplicates), then append only
+        // configured titles that are not already present in the new To do.
+        let mut titles: Vec<&str> = unfinished.iter().map(|item| item.title.as_str()).collect();
+        let mut seen: BTreeSet<&str> = titles.iter().copied().collect();
+        for title in self
+            .recurring_todos
+            .iter()
+            .filter_map(|todo| todo.title_on(today))
+        {
+            if seen.insert(title) {
+                titles.push(title);
+            }
+        }
         let path = self.dir.join(format!("{}.md", today.format("%Y-%m")));
         let (mut document, source) = if let Some((mut previous, _)) = previous {
             // Item lines are ordered by section and file position. Remove in
@@ -711,9 +737,9 @@ impl Store {
             (Document::read_or_empty(path)?, None)
         };
         let index = document.ensure_day(today)?;
-        let lines = unfinished
+        let lines = titles
             .iter()
-            .map(|item| format!("- {}{}", item.title, document.newline));
+            .map(|title| format!("- {title}{}", document.newline));
         let insertion = document.days[index].headings[Status::Todo.index()] + 1;
         document.lines.splice(insertion..insertion, lines);
         document.reparse()?;

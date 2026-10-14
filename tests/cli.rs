@@ -10,6 +10,7 @@ fn run(directory: &std::path::Path, args: &[&str]) -> Output {
         .arg("--data-dir")
         .arg(directory)
         .args(args)
+        .env("XDG_CONFIG_HOME", directory.join(".test-config"))
         .output()
         .unwrap()
 }
@@ -349,6 +350,150 @@ fn new_day_command_moves_unfinished_items_across_months_and_keeps_done_on_the_so
     );
     assert!(success(logs, &["n"]).contains("already started"));
     assert_eq!(store.active().unwrap().unwrap().items.len(), 2);
+}
+
+#[test]
+fn new_day_loads_recurring_todos_with_saved_and_overridden_data_directories() {
+    for override_directory in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let config_dir = temp.path().join("config");
+        let configured_logs = temp.path().join("configured-logs");
+        let logs = if override_directory {
+            temp.path().join("overridden-logs")
+        } else {
+            configured_logs.clone()
+        };
+        fs::create_dir_all(config_dir.join("kiroku")).unwrap();
+        let today = Local::now().date_naive();
+        let weekday = today.format("%A").to_string().to_lowercase();
+        let other_weekday = (today + chrono::Duration::days(1))
+            .format("%A")
+            .to_string()
+            .to_lowercase();
+        fs::write(
+            config_dir.join("kiroku/config.toml"),
+            format!(
+                r#"
+data_dir = "{}"
+[[recurring_todos]]
+title = "completed recurring"
+days = ["{weekday}"]
+[[recurring_todos]]
+title = "never recorded 日本語"
+days = ["{weekday}"]
+[[recurring_todos]]
+title = "carry"
+days = ["{weekday}"]
+[[recurring_todos]]
+title = "another weekday"
+days = ["{other_weekday}"]
+"#,
+                configured_logs.display()
+            ),
+        )
+        .unwrap();
+        let store = Store::new(logs.clone());
+        let source = today - chrono::Duration::days(35);
+        store
+            .add_on_date(source, "completed recurring", Status::Done)
+            .unwrap();
+        store.add_on_date(source, "carry", Status::Doing).unwrap();
+        let invoke = |args: &[&str]| {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_krk"));
+            command.env("XDG_CONFIG_HOME", &config_dir);
+            if override_directory {
+                command.arg("--data-dir").arg(&logs);
+            }
+            let output = command.args(args).output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap()
+        };
+        assert!(invoke(&["new-day"]).contains("day started"));
+        let days = store.days(None).unwrap();
+        assert_eq!(days[0].items.len(), 1);
+        assert_eq!(days[0].items[0].status, Status::Done);
+        assert_eq!(
+            days[1]
+                .items
+                .iter()
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            ["carry", "completed recurring", "never recorded 日本語"]
+        );
+        assert!(days[1].items.iter().all(|item| item.status == Status::Todo));
+        invoke(&["done", "2"]);
+        let path = logs.join(format!("{}.md", today.format("%Y-%m")));
+        let original = fs::read(&path).unwrap();
+        assert!(invoke(&["n"]).contains("already started"));
+        assert_eq!(fs::read(path).unwrap(), original);
+        if override_directory {
+            assert!(!configured_logs.exists());
+        }
+    }
+}
+
+#[test]
+fn invalid_recurring_todos_fail_before_new_day_changes_the_logs() {
+    let temp = tempfile::tempdir().unwrap();
+    let config_dir = temp.path().join("config");
+    let logs = temp.path().join("logs");
+    fs::create_dir_all(config_dir.join("kiroku")).unwrap();
+    let config_path = config_dir.join("kiroku/config.toml");
+    for entry in [
+        "title = 'foo'\ndays = ['funday']",
+        "title = 'foo'\ndays = []",
+        "title = \"bad\\nline\"\ndays = ['monday']",
+    ] {
+        fs::write(&config_path, format!("[[recurring_todos]]\n{entry}\n")).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_krk"))
+            .arg("--data-dir")
+            .arg(&logs)
+            .arg("new-day")
+            .env("XDG_CONFIG_HOME", &config_dir)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(&config_path.display().to_string())
+        );
+        assert!(!logs.exists());
+    }
+}
+
+#[test]
+fn first_title_addition_does_not_apply_new_day_recurrence() {
+    let temp = tempfile::tempdir().unwrap();
+    let config_dir = temp.path().join("config");
+    let logs = temp.path().join("logs");
+    fs::create_dir_all(config_dir.join("kiroku")).unwrap();
+    let weekday = Local::now().format("%A").to_string().to_lowercase();
+    fs::write(
+        config_dir.join("kiroku/config.toml"),
+        format!(
+            r#"
+[[recurring_todos]]
+title = "recurring"
+days = ["{weekday}"]
+"#
+        ),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_krk"))
+        .arg("--data-dir")
+        .arg(&logs)
+        .args(["todo", "explicit addition"])
+        .env("XDG_CONFIG_HOME", &config_dir)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let store = Store::new(logs);
+    let day = store.active().unwrap().unwrap();
+    assert_eq!(day.items.len(), 1);
+    assert_eq!(day.items[0].title, "explicit addition");
 }
 
 #[test]

@@ -26,6 +26,11 @@ meeting" or "monthly op meeting - september".
   a home-relative value such as `data_dir = "~/Documents/kiroku"`.
 - `--data-dir PATH` overrides the configured directory for that invocation.
   Directory precedence: command-line override, saved setting, default.
+- `[[recurring_todos]]` entries configure a title and `days` list of lowercase
+  full weekday names. Explicit `new-day` (including the TUI's `n`) appends
+  matching titles to To do after unfinished work, even when previously Done
+  or absent from history. Apply configuration with `--data-dir` as well.
+  Require a valid single-line title and at least one weekday before any write.
 - Keep all three states together in a human-readable, manually editable
   chronological log. Do not use separate files for To do, Doing, and Done.
 - Keep multiple days in each file, rather than creating a file for every day.
@@ -61,12 +66,17 @@ meeting" or "monthly op meeting - september".
   the active day. Status commands can move a source date's letter using
   `--from` together with `--date`. The TUI `m` prompt moves a selected item
   from any day to a chosen date and section. `new-day` always starts today.
-- The first day starts empty.
+- The first day starts with matching recurring todos, or empty if none match.
 - Starting a subsequent day moves the previous recorded day's To do and
   Doing items into the new day's To do section, preserving order and duplicates.
   Remove their source entries so only Done items remain on the previously
   active day, retaining its headings and comments.
 - The new day's Doing and Done sections start empty.
+- Recurring todos preserve configuration order and add no extra entry for
+  an exact, case-sensitive title already carried forward or seeded by another
+  matching rule. Preserve duplicate unfinished items. Only apply recurrence
+  when explicitly creating today; leave existing days, implicit first-day
+  additions, explicit date operations, and skipped dates unchanged.
 - Move items from To do to Doing, then from Doing to Done.
 - Done items are not carried forward.
 - Preserve Done entries and all other earlier days during rollover.

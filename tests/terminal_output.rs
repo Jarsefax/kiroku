@@ -15,6 +15,7 @@ fn redirected(directory: &Path, args: &[&str]) -> Output {
         .arg("--data-dir")
         .arg(directory)
         .args(args)
+        .env("XDG_CONFIG_HOME", directory.join(".test-config"))
         .output()
         .unwrap()
 }
@@ -34,6 +35,7 @@ fn terminal(directory: &Path, args: &[&str], term: &str, no_color: bool) -> Outp
         .arg("--data-dir")
         .arg(directory)
         .args(args)
+        .env("XDG_CONFIG_HOME", directory.join(".test-config"))
         .env("TERM", term)
         .env_remove("NO_COLOR")
         .stdin(Stdio::null())

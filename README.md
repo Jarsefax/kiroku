@@ -51,7 +51,7 @@ day. Use `krk new-day` to start subsequent days and move unfinished work forward
 | Command | Behavior |
 | --- | --- |
 | `krk` | Open the keyboard-driven TUI |
-| `krk new-day` | Start today and move unfinished items into To do; leave an existing today unchanged |
+| `krk new-day` | Start today with unfinished items and configured recurring todos; leave an existing today unchanged |
 | `krk todo "title"` | Add a todo to the active day |
 | `krk list` | Show today; if empty, also show the previous recorded day |
 | `krk search "text" [PERIOD]` | Search titles across all recorded days, or a selected period |
@@ -293,7 +293,8 @@ on or before today, even after a weekend or across a month boundary. Dates use y
 timezone. When no active day exists, adding a title creates today and saves
 the item in one update. This works with `todo`, `doing`, `done`, and the TUI's
 `a` key. Cancelling an add prompt leaves the log unchanged.
-The first day started through `new-day` starts empty.
+The first day started through `new-day` contains any configured recurring todos
+for its weekday, or starts empty when none match.
 
 Starting a new day moves the previous recorded day's To do and Doing items
 into the new day's To do section, preserving their order and duplicate titles.
@@ -302,6 +303,16 @@ active day. Its empty To do and Doing headings and comments stay in place.
 Other earlier records remain intact; skipped days are not created. Starting
 an already recorded today leaves all records unchanged. `new-day` always
 starts today; date-targeted additions create missing records without rollover.
+
+After moving unfinished work, `new-day` adds the configured recurring todos
+that match today's weekday, in configuration order. These are fresh To do
+entries even if the title was previously Done or has never been recorded.
+A matching title already carried forward receives no extra copy; existing
+duplicate unfinished entries are preserved. Title matching is exact and
+case-sensitive. Recurrence also applies to the TUI's `n` key. It only applies
+when `new-day` creates today, so rerunning it never re-adds completed or removed
+items. Implicit first-day creation through an addition and explicit `--date`
+operations do not apply recurrence. Skipped days receive no recurring entries.
 
 Within a month, rollover updates both days in one atomic save. Across months,
 it uses the same destination-first saving as explicit item moves: both logs
@@ -633,7 +644,28 @@ No config file is required.
 data_dir = "~/Documents/kiroku"
 ```
 
-Change that setting to choose a persistent directory. For a single invocation:
+To seed new days with weekday-specific todos, add one `[[recurring_todos]]`
+entry per title:
+
+```toml
+[[recurring_todos]]
+title = "foo"
+days = ["monday", "tuesday", "thursday", "friday"]
+
+[[recurring_todos]]
+title = "bar"
+days = ["wednesday"]
+```
+
+Use lowercase full weekday names from `monday` through `sunday`. Each entry
+needs a nonempty, single-line title and at least one weekday. Surrounding
+title whitespace is trimmed, just as for manually added items. Repeat a
+weekday or configure the same title more than once and it still gets only one
+new entry on that day. Omit `recurring_todos` to retain the default behavior.
+These settings also apply when using `--data-dir`; an invalid recurrence
+configuration prevents `new-day` from changing any logs.
+
+Change `data_dir` to choose a persistent directory. For a single invocation:
 
 ```sh
 krk --data-dir ~/other-folder list
@@ -723,6 +755,7 @@ leaving only Done items on the source day, numbered duplicate titles,
 date selection and list fallback, manual comments and CRLF preservation,
 legacy and versioned logs, unsupported-format protection, malformed-file
 protection, stale selections, concurrent writes, configuration,
+weekday-specific recurring todos in the CLI and TUI,
 date-targeted additions, moves, and copies with chronological insertion,
 CLI workflows, search/filter references and copying results into today,
 numbered search/list results with `--repeat` and `--remove`, repeating items across

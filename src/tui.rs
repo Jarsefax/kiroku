@@ -190,7 +190,7 @@ impl App {
         self.current = self.active_index().unwrap_or(0);
         self.selected = 0;
         self.message = if created {
-            "Started today; unfinished items moved into To do."
+            "Started today with unfinished items and recurring todos."
         } else {
             "Today is already started; no changes made."
         }
@@ -928,6 +928,65 @@ mod tests {
 
     fn press(app: &mut App, code: KeyCode) {
         assert!(!app.key(KeyEvent::new(code, KeyModifiers::NONE)).unwrap());
+    }
+
+    #[test]
+    fn new_day_key_adds_configured_todos_once_and_preserves_completed_history() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_dir = temp.path().join("config");
+        std::fs::create_dir_all(config_dir.join("kiroku")).unwrap();
+        let today = Local::now().date_naive();
+        std::fs::write(
+            config_dir.join("kiroku/config.toml"),
+            format!(
+                r#"
+[[recurring_todos]]
+title = "recurring"
+days = ["{}"]
+"#,
+                today.format("%A").to_string().to_lowercase()
+            ),
+        )
+        .unwrap();
+        let store = Store::new(temp.path().join("logs"))
+            .with_recurring_todos(kiroku::config::recurring_todos_with(&config_dir).unwrap())
+            .unwrap();
+        store
+            .add_on_date(today - chrono::Duration::days(1), "recurring", Status::Done)
+            .unwrap();
+        store
+            .add_on_date(today - chrono::Duration::days(1), "carry", Status::Doing)
+            .unwrap();
+        let mut app = app(store.clone());
+        press(&mut app, KeyCode::Char('n'));
+        assert_eq!(app.day().unwrap().date, today);
+        assert_eq!(
+            app.day()
+                .unwrap()
+                .items
+                .iter()
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            ["carry", "recurring"]
+        );
+        assert!(
+            app.day()
+                .unwrap()
+                .items
+                .iter()
+                .all(|item| item.status == Status::Todo)
+        );
+        assert_eq!(
+            store.previous(today).unwrap().unwrap().items[0].status,
+            Status::Done
+        );
+        app.selected = 1;
+        press(&mut app, KeyCode::Char('d'));
+        let path = store.dir.join(format!("{}.md", today.format("%Y-%m")));
+        let original = std::fs::read(&path).unwrap();
+        press(&mut app, KeyCode::Char('n'));
+        assert_eq!(std::fs::read(path).unwrap(), original);
+        assert!(app.message.contains("already started"));
     }
 
     #[test]
