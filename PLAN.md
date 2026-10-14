@@ -31,6 +31,9 @@ meeting" or "monthly op meeting - september".
   matching titles to To do after unfinished work, even when previously Done
   or absent from history. Apply configuration with `--data-dir` as well.
   Require a valid single-line title and at least one weekday before any write.
+- `new-day --skip-recurring` skips configured recurring additions for that
+  invocation while still moving all unfinished work. Preserve configuration,
+  validate it as usual, and leave already-started days unchanged.
 - Keep all three states together in a human-readable, manually editable
   chronological log. Do not use separate files for To do, Doing, and Done.
 - Keep multiple days in each file, rather than creating a file for every day.

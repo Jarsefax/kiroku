@@ -437,6 +437,107 @@ days = ["{other_weekday}"]
 }
 
 #[test]
+fn new_day_can_skip_recurring_todos_for_one_invocation() {
+    for (command, previous_days) in [("new-day", None), ("new-day", Some(1)), ("n", Some(35))] {
+        let temp = tempfile::tempdir().unwrap();
+        let config_dir = temp.path().join("config");
+        let logs = temp.path().join("logs");
+        fs::create_dir_all(config_dir.join("kiroku")).unwrap();
+        let config_path = config_dir.join("kiroku/config.toml");
+        let today = Local::now().date_naive();
+        let weekday = today.format("%A").to_string().to_lowercase();
+        let configuration = format!(
+            r#"
+data_dir = "{}"
+[[recurring_todos]]
+title = "daily meeting"
+days = ["{weekday}"]
+[[recurring_todos]]
+title = "pending recurring"
+days = ["{weekday}"]
+[[recurring_todos]]
+title = "never recorded"
+days = ["{weekday}"]
+"#,
+            logs.display()
+        );
+        fs::write(&config_path, &configuration).unwrap();
+        let store = Store::new(logs.clone());
+        if let Some(days) = previous_days {
+            let previous = today - chrono::Duration::days(days);
+            store
+                .add_on_date(previous, "daily meeting", Status::Done)
+                .unwrap();
+            store
+                .add_on_date(previous, "pending recurring", Status::Todo)
+                .unwrap();
+            store.add_on_date(previous, "carry", Status::Doing).unwrap();
+        }
+        let invoke = |directory: Option<&std::path::Path>, args: &[&str]| {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_krk"));
+            command.env("XDG_CONFIG_HOME", &config_dir);
+            if let Some(directory) = directory {
+                command.arg("--data-dir").arg(directory);
+            }
+            let output = command.args(args).output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap()
+        };
+        let directory = previous_days.map(|_| logs.as_path());
+        let output = invoke(directory, &[command, "--skip-recurring"]);
+        assert!(output.contains("day started; recurring todos skipped"));
+        let day = store.active().unwrap().unwrap();
+        assert_eq!(day.date, today);
+        let expected = if previous_days.is_some() {
+            vec!["pending recurring", "carry"]
+        } else {
+            vec![]
+        };
+        assert_eq!(
+            day.items
+                .iter()
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert!(day.items.iter().all(|item| item.status == Status::Todo));
+        if previous_days.is_some() {
+            let previous = store.previous(today).unwrap().unwrap();
+            assert_eq!(previous.items.len(), 1);
+            assert_eq!(previous.items[0].title, "daily meeting");
+            assert_eq!(previous.items[0].status, Status::Done);
+        }
+        let path = logs.join(format!("{}.md", today.format("%Y-%m")));
+        let original = fs::read(&path).unwrap();
+        for args in [&["new-day", "--skip-recurring"][..], &["new-day"]] {
+            assert!(invoke(directory, args).contains("already started; no changes made"));
+            assert_eq!(fs::read(&path).unwrap(), original);
+        }
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), configuration);
+
+        // A later invocation still uses the same recurrence configuration.
+        let normal_logs = temp.path().join("normal-logs");
+        invoke(Some(&normal_logs), &["new-day"]);
+        let normal = Store::new(normal_logs).active().unwrap().unwrap();
+        assert_eq!(
+            normal
+                .items
+                .iter()
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            ["daily meeting", "pending recurring", "never recorded"]
+        );
+        let help = invoke(directory, &[command, "--help"]);
+        assert!(help.contains("--skip-recurring"));
+        assert!(help.contains("still carry unfinished work"));
+    }
+}
+
+#[test]
 fn invalid_recurring_todos_fail_before_new_day_changes_the_logs() {
     let temp = tempfile::tempdir().unwrap();
     let config_dir = temp.path().join("config");
@@ -449,18 +550,24 @@ fn invalid_recurring_todos_fail_before_new_day_changes_the_logs() {
         "title = \"bad\\nline\"\ndays = ['monday']",
     ] {
         fs::write(&config_path, format!("[[recurring_todos]]\n{entry}\n")).unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_krk"))
-            .arg("--data-dir")
-            .arg(&logs)
-            .arg("new-day")
-            .env("XDG_CONFIG_HOME", &config_dir)
-            .output()
-            .unwrap();
-        assert!(!output.status.success());
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains(&config_path.display().to_string())
-        );
-        assert!(!logs.exists());
+        for skip_recurring in [false, true] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_krk"));
+            command
+                .arg("--data-dir")
+                .arg(&logs)
+                .arg("new-day")
+                .env("XDG_CONFIG_HOME", &config_dir);
+            if skip_recurring {
+                command.arg("--skip-recurring");
+            }
+            let output = command.output().unwrap();
+            assert!(!output.status.success());
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .contains(&config_path.display().to_string())
+            );
+            assert!(!logs.exists());
+        }
     }
 }
 

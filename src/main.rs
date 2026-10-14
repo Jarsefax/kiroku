@@ -126,7 +126,13 @@ struct ResultAction {
 enum Command {
     /// Start today with unfinished items and configured recurring todos
     #[command(visible_alias = "n")]
-    NewDay,
+    NewDay {
+        #[arg(
+            long,
+            help = "Skip configured recurring todos for this invocation; still carry unfinished work"
+        )]
+        skip_recurring: bool,
+    },
     /// List today, a relative period, a date, or an inclusive FROM..TO range
     #[command(visible_alias = "l")]
     List {
@@ -262,7 +268,7 @@ enum Command {
 impl Command {
     fn name(&self) -> &'static str {
         match self {
-            Self::NewDay => "new-day",
+            Self::NewDay { .. } => "new-day",
             Self::List { .. } => "list",
             Self::Search { .. } => "search",
             Self::Doing { .. } => "doing",
@@ -576,7 +582,7 @@ fn run(args: Args, style: Style) -> Result<()> {
 fn run_command(args: Args, out: &mut CommandOutput) -> Result<()> {
     let style = out.style;
     let store = Store::new(config::resolve(args.data_dir.as_deref())?);
-    let store = if matches!(args.command, None | Some(Command::NewDay)) {
+    let store = if matches!(args.command, None | Some(Command::NewDay { .. })) {
         store.with_recurring_todos(config::recurring_todos()?)?
     } else {
         store
@@ -618,12 +624,19 @@ fn run_command(args: Args, out: &mut CommandOutput) -> Result<()> {
             }
             show_or_change(&store, period.as_deref(), None, action, today, out)
         }
-        Some(Command::NewDay) => {
+        Some(Command::NewDay { skip_recurring }) => {
+            let store = if skip_recurring {
+                store.with_recurring_todos(vec![])?
+            } else {
+                store
+            };
             let created = store.new_day(today)?;
             out.write(&format!(
                 "{}: {}\n\n",
                 style.heading(&listing::format_date(today)),
-                if created {
+                if created && skip_recurring {
+                    "day started; recurring todos skipped"
+                } else if created {
                     "day started"
                 } else {
                     "day already started; no changes made"

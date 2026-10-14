@@ -52,6 +52,7 @@ day. Use `krk new-day` to start subsequent days and move unfinished work forward
 | --- | --- |
 | `krk` | Open the keyboard-driven TUI |
 | `krk new-day` | Start today with unfinished items and configured recurring todos; leave an existing today unchanged |
+| `krk new-day --skip-recurring` | Start today without adding configured recurring todos; still move unfinished work into To do |
 | `krk todo "title"` | Add a todo to the active day |
 | `krk list` | Show today; if empty, also show the previous recorded day |
 | `krk search "text" [PERIOD]` | Search titles across all recorded days, or a selected period |
@@ -313,6 +314,13 @@ case-sensitive. Recurrence also applies to the TUI's `n` key. It only applies
 when `new-day` creates today, so rerunning it never re-adds completed or removed
 items. Implicit first-day creation through an addition and explicit `--date`
 operations do not apply recurrence. Skipped days receive no recurring entries.
+
+For a vacation day or another exception, use `krk new-day --skip-recurring`
+(or `krk n --skip-recurring`). This skips adding configured recurring todos
+for that invocation. Unfinished To do and Doing items still move forward,
+including any previously added recurring items that remain unfinished.
+The configuration stays unchanged, and future `new-day` invocations add
+recurring todos as usual. An already-started day is still left unchanged.
 
 Within a month, rollover updates both days in one atomic save. Across months,
 it uses the same destination-first saving as explicit item moves: both logs
@@ -664,6 +672,8 @@ weekday or configure the same title more than once and it still gets only one
 new entry on that day. Omit `recurring_todos` to retain the default behavior.
 These settings also apply when using `--data-dir`; an invalid recurrence
 configuration prevents `new-day` from changing any logs.
+The `--skip-recurring` option skips adding recurring todos for one invocation;
+configuration validation still applies.
 
 Change `data_dir` to choose a persistent directory. For a single invocation:
 
