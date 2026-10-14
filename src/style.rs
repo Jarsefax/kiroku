@@ -19,6 +19,14 @@ impl Style {
         self.paint(text, "1;36")
     }
 
+    pub fn history_heading(self, text: &str) -> String {
+        self.paint(text, "38;5;73")
+    }
+
+    pub fn history(self, text: &str) -> String {
+        self.paint(text, "38;5;71")
+    }
+
     pub fn status(self, text: &str, status: Status) -> String {
         self.paint(
             text,

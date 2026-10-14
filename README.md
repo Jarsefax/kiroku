@@ -178,9 +178,13 @@ krk -D ~/other-folder -c never list
 
 ### Command output colors
 
-Commands use color automatically when writing to a terminal: cyan dates and
-result numbers, blue **To do**, yellow **Doing**, green **Done**, dimmed hints,
-and red error prefixes. Item titles keep the terminal's default color.
+Commands use color automatically when writing to a terminal. Active and future
+days have cyan dates and status colors for section headings and item numbers:
+blue **To do**, yellow **Doing**, and green **Done**. Historical days use subdued
+cyan for dates and weekdays, and a darker green for section headings and item
+numbers, including any unfinished items added through dated edits.
+Hints are dimmed and error prefixes are red.
+Item titles keep the terminal's default color.
 Piped or redirected output stays plain, as does `krk path`.
 
 Use the global `--color auto|always|never` option to control command output:

@@ -276,6 +276,14 @@ pub fn render_styled(
     let mut result_number = 0;
     for day in &view.days {
         let is_active = Some(day.date) == view.active;
+        let is_history = !is_active && day.date <= today;
+        let status_style = |text: &str, status| {
+            if is_history {
+                style.history(text)
+            } else {
+                style.status(text, status)
+            }
+        };
         let mut labels = vec![];
         if day.date == today {
             labels.push("today");
@@ -300,7 +308,11 @@ pub fn render_styled(
         let _ = writeln!(
             output,
             "{} {}",
-            style.heading(&format_date(day.date)),
+            if is_history {
+                style.history_heading(&format_date(day.date))
+            } else {
+                style.heading(&format_date(day.date))
+            },
             style.muted(&format!("({})", labels.join("; ")))
         );
         for status in Status::ALL {
@@ -313,7 +325,7 @@ pub fn render_styled(
             if items.is_empty() {
                 continue;
             }
-            let _ = writeln!(output, "  {}", style.status(status.label(), status));
+            let _ = writeln!(output, "  {}", status_style(status.label(), status));
             for (index, item) in items {
                 let label = if result_numbers {
                     result_number += 1;
@@ -330,7 +342,7 @@ pub fn render_styled(
                 let _ = writeln!(
                     output,
                     "    {} {}",
-                    style.status(&item_label(&label, label_width), status),
+                    status_style(&item_label(&label, label_width), status),
                     item.title
                 );
             }

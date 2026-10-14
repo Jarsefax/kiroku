@@ -40,6 +40,9 @@ meeting" or "monthly op meeting - september".
 - Each day has three sections: To do, Doing, and Done.
 - CLI output and the TUI omit empty status sections and their headings.
 - Dates in command output include the full weekday after the date.
+- Historical dates and weekdays use subdued cyan, with a darker green for
+  section headings and item labels in colored CLI listings; active and future
+  days retain their status colors.
 - Start a new day only through an explicit command. Opening the app or
   crossing midnight does not start a new day automatically.
 - Exception: when no active day exists, adding a title creates today and
