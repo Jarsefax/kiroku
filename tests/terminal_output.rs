@@ -12,9 +12,9 @@ use std::{
 
 fn redirected(directory: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_krk"))
+        .args(args)
         .arg("--data-dir")
         .arg(directory)
-        .args(args)
         .env("XDG_CONFIG_HOME", directory.join(".test-config"))
         .output()
         .unwrap()
@@ -32,9 +32,9 @@ fn terminal(directory: &Path, args: &[&str], term: &str, no_color: bool) -> Outp
         .unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_krk"));
     command
+        .args(args)
         .arg("--data-dir")
         .arg(directory)
-        .args(args)
         .env("XDG_CONFIG_HOME", directory.join(".test-config"))
         .env("TERM", term)
         .env_remove("NO_COLOR")
@@ -103,7 +103,7 @@ fn long_terminal_listings_have_one_heading_and_preserve_the_body() {
     seed(temp.path());
     for (args, command) in [
         (&["list", "--color", "never"][..], "list"),
-        (&["l", "--color", "never"][..], "list"),
+        (&["l", "--color", "never"][..], "l"),
         (&["search", "task", "--color", "never"][..], "search"),
         (
             &["list", "--status", "todo", "--color", "never"][..],
@@ -114,6 +114,63 @@ fn long_terminal_listings_have_one_heading_and_preserve_the_body() {
         let decorated = success(terminal(temp.path(), args, "xterm-256color", false));
         assert_eq!(without_separator(&decorated, command), body);
     }
+}
+
+#[test]
+fn separator_includes_supplied_arguments_options_and_aliases() {
+    let temp = tempfile::tempdir().unwrap();
+    seed(temp.path());
+    for (args, invocation) in [
+        (&["list", "week"][..], "list week"),
+        (&["l", "week", "--status=todo"][..], "l week --status=todo"),
+        (
+            &["--color", "never", "list", "week", "--status", "todo"][..],
+            "--color never list week --status todo",
+        ),
+        (
+            &["search", "first task", "--status", "todo"][..],
+            "search 'first task' --status todo",
+        ),
+    ] {
+        let decorated = success(terminal(temp.path(), args, "xterm-256color", true));
+        let command = format!("{invocation} --data-dir {}", temp.path().display());
+        assert_eq!(
+            without_separator(&decorated, &command),
+            success(redirected(temp.path(), args))
+        );
+    }
+}
+
+#[test]
+fn separator_quotes_titles_with_apostrophes_and_shell_punctuation() {
+    let temp = tempfile::tempdir().unwrap();
+    let title = "first task's $HOME `id`";
+    success(redirected(temp.path(), &["todo", title]));
+    let args = ["search", title];
+    let decorated = success(terminal(temp.path(), &args, "xterm-256color", true));
+    let command = format!(
+        "search 'first task'\"'\"'s $HOME `id`' --data-dir {}",
+        temp.path().display()
+    );
+    assert_eq!(
+        without_separator(&decorated, &command),
+        success(redirected(temp.path(), &args))
+    );
+}
+
+#[test]
+fn separator_displays_control_characters_in_paths_as_visible_escapes() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path().join("logs \x1b[2J\n'quoted'");
+    seed(&logs);
+    let decorated = success(terminal(&logs, &["list"], "xterm-256color", true));
+    let heading = decorated.lines().nth(1).unwrap();
+    assert!(heading.contains("\\u{1b}[2J\\n"), "{heading:?}");
+    assert!(heading.contains("'\"'\"'quoted'\"'\"'"), "{heading:?}");
+    assert_eq!(
+        without_separator(&decorated, "list"),
+        success(redirected(&logs, &["list"]))
+    );
 }
 
 #[test]

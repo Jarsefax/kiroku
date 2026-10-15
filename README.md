@@ -29,16 +29,19 @@ Long command output starts with a dimmed separator in the terminal, making
 each listing, search, or update easy to distinguish from the previous command:
 
 ```text
-── krk list ────────────────────────────
+── krk list week ───────────────────────
 2026-10-13 Tuesday (today; active — numbers are editable)
   To do
     [1] weekly meeting
 ...
 ```
 
-The separator appears once before output with at least three nonblank lines,
-without clearing earlier output. Use `krk list --no-separator` to omit it;
-the flag also works before the command. Piped or redirected output, short
+The separator includes the command's arguments and options as supplied,
+including aliases. Values containing spaces or shell punctuation are quoted;
+control characters are shown as visible escapes. It appears once before
+output with at least three nonblank lines, without clearing earlier output.
+Use `krk list --no-separator` to omit it; the flag also works before the
+command. Piped or redirected output, short
 notices, errors, `krk path`, help, and version output have no separator.
 The separator follows `--color` and `NO_COLOR`; on `TERM=dumb` it is plain
 text. Running `krk` opens the TUI, which manages its own screen.

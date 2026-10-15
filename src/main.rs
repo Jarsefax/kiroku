@@ -11,6 +11,7 @@ use kiroku::{
     style::Style,
 };
 use std::{
+    ffi::OsString,
     io::{self, IsTerminal, Write},
     path::PathBuf,
 };
@@ -270,25 +271,6 @@ enum Command {
     InitConfig,
 }
 
-impl Command {
-    fn name(&self) -> &'static str {
-        match self {
-            Self::NewDay { .. } => "new-day",
-            Self::List { .. } => "list",
-            Self::Search { .. } => "search",
-            Self::Doing { .. } => "doing",
-            Self::Done { .. } => "done",
-            Self::Todo { .. } => "todo",
-            Self::Repeat { .. } => "repeat",
-            Self::Edit { .. } => "edit",
-            Self::Move { .. } => "move",
-            Self::Remove { .. } => "remove",
-            Self::Path => "path",
-            Self::InitConfig => "init-config",
-        }
-    }
-}
-
 #[derive(Clone, Copy, ValueEnum)]
 enum CliDirection {
     Up,
@@ -321,13 +303,13 @@ fn output(text: &str) -> Result<()> {
 
 struct CommandOutput {
     style: Style,
-    separator: Option<&'static str>,
+    separator: Option<String>,
     pending: String,
 }
 
 impl CommandOutput {
     fn write(&mut self, text: &str) -> Result<()> {
-        let Some(command) = self.separator else {
+        let Some(command) = self.separator.as_deref() else {
             return output(text);
         };
         // Hold short preambles until we know whether the whole output needs a boundary.
@@ -342,8 +324,8 @@ impl CommandOutput {
         {
             return Ok(());
         }
+        let heading = format!("── {command} ");
         self.separator = None;
-        let heading = format!("── krk {command} ");
         let width = crossterm::terminal::size()
             .ok()
             .map(|(width, _)| usize::from(width))
@@ -567,13 +549,44 @@ fn show_or_change(
     out.write(&listing::render_styled(&view, today, filter, true, style))
 }
 
-fn run(args: Args, style: Style) -> Result<()> {
+fn format_command(arguments: &[OsString]) -> String {
+    let mut command = String::from("krk");
+    for argument in arguments {
+        // Keep the heading on one line without letting control characters affect the terminal.
+        let text: String = argument
+            .to_string_lossy()
+            .chars()
+            .map(|ch| {
+                if ch.is_control() {
+                    ch.escape_default().to_string()
+                } else {
+                    ch.to_string()
+                }
+            })
+            .collect();
+        command.push(' ');
+        if !text.is_empty()
+            && text
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || "_@%+=:,./-".contains(ch))
+        {
+            command.push_str(&text);
+        } else {
+            command.push('\'');
+            command.push_str(&text.replace('\'', "'\"'\"'"));
+            command.push('\'');
+        }
+    }
+    command
+}
+
+fn run(args: Args, style: Style, arguments: &[OsString]) -> Result<()> {
     let separator = args
         .command
         .as_ref()
         .filter(|command| !matches!(command, Command::Path))
         .filter(|_| !args.no_separator && io::stdout().is_terminal())
-        .map(Command::name);
+        .map(|_| format_command(arguments));
     let mut out = CommandOutput {
         style,
         separator,
@@ -748,10 +761,11 @@ fn run_command(args: Args, out: &mut CommandOutput) -> Result<()> {
 }
 
 fn main() {
-    let args = Args::parse();
+    let arguments: Vec<_> = std::env::args_os().collect();
+    let args = Args::parse_from(&arguments);
     let stdout_style = args.color.style(io::stdout().is_terminal());
     let stderr_style = args.color.style(io::stderr().is_terminal());
-    if let Err(error) = run(args, stdout_style) {
+    if let Err(error) = run(args, stdout_style, &arguments[1..]) {
         eprintln!("{} {error:#}", stderr_style.error("krk:"));
         std::process::exit(1);
     }
