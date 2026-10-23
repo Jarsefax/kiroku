@@ -264,6 +264,15 @@ enum Command {
     /// Print the resolved log directory
     #[command(visible_alias = "p")]
     Path,
+    /// Print the monthly file containing a recorded day (default: latest date)
+    #[command(
+        visible_alias = "f",
+        long_about = "Print only the absolute path to the monthly Markdown file containing a recorded day. Defaults to the latest recorded date, including future dates. Open it in an editor with: vim \"$(krk file)\". No files are created or changed."
+    )]
+    File {
+        #[arg(value_name = "YYYY-MM-DD", value_parser = parse_date, help = "Select this recorded day instead of the latest date")]
+        date: Option<NaiveDate>,
+    },
     /// Create a default config file without replacing an existing one
     #[command(
         long_about = "Create a default config file at ~/.config/kiroku/config.toml, or $XDG_CONFIG_HOME/kiroku/config.toml when XDG_CONFIG_HOME is an absolute path. Includes commented recurring-todo examples. Existing files are left unchanged, and no logs are created."
@@ -584,7 +593,7 @@ fn run(args: Args, style: Style, arguments: &[OsString]) -> Result<()> {
     let separator = args
         .command
         .as_ref()
-        .filter(|command| !matches!(command, Command::Path))
+        .filter(|command| !matches!(command, Command::Path | Command::File { .. }))
         .filter(|_| !args.no_separator && io::stdout().is_terminal())
         .map(|_| format_command(arguments));
     let mut out = CommandOutput {
@@ -624,6 +633,9 @@ fn run_command(args: Args, out: &mut CommandOutput) -> Result<()> {
         Some(Command::InitConfig) => unreachable!("handled before loading configuration"),
         None => tui::run(store),
         Some(Command::Path) => out.write(&format!("{}\n", store.dir.display())),
+        Some(Command::File { date }) => {
+            out.write(&format!("{}\n", store.file_path(date)?.display()))
+        }
         Some(Command::Search {
             query,
             period,

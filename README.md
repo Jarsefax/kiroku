@@ -42,7 +42,7 @@ control characters are shown as visible escapes. It appears once before
 output with at least three nonblank lines, without clearing earlier output.
 Use `krk list --no-separator` to omit it; the flag also works before the
 command. Piped or redirected output, short
-notices, errors, `krk path`, help, and version output have no separator.
+notices, errors, `krk path`, `krk file`, help, and version output have no separator.
 The separator follows `--color` and `NO_COLOR`; on `TERM=dumb` it is plain
 text. Running `krk` opens the TUI, which manages its own screen.
 
@@ -79,6 +79,7 @@ day. Use `krk new-day` to start subsequent days and move unfinished work forward
 | `krk edit NUMBER "title"` | Rename an active-day item |
 | `krk remove NUMBER` | Remove an active-day item immediately |
 | `krk path` | Print the resolved log directory |
+| `krk file [YYYY-MM-DD]` | Print the monthly file containing that recorded day; default: latest recorded date |
 
 All status commands can move an item from any section. Titles must be
 nonempty, single-line text; Unicode and duplicate titles are supported.
@@ -147,6 +148,7 @@ options as the full command and appear in `krk --help`.
 | `move` | `m` |
 | `remove` | `x` |
 | `path` | `p` |
+| `file` | `f` |
 
 For example, `krk l week`, `krk t "urgent task"`, and `krk m 3 up -n 2`.
 
@@ -535,6 +537,21 @@ on input and resize rather than running an idle animation loop.
 ## Files and configuration
 
 Default logs live in **`~/Documents/kiroku/`**.
+Use `krk file` to print the absolute path to the monthly file containing the
+latest recorded date, including future dates. To select another recorded
+day, use `krk file YYYY-MM-DD`. The command prints only the path and a newline,
+without color or a separator, and does not create or change files. If no day
+exists, or the supplied date is not recorded, it fails with an error on stderr
+and leaves stdout empty.
+
+Open a log directly in an editor using quoted command substitution to preserve
+spaces in the path:
+
+```sh
+vim "$(krk file)"
+vim "$(krk file 2026-10-02)"
+```
+
 Each month has a file such as `2026-10.md`:
 
 ```markdown

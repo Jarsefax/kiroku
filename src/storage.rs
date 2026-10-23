@@ -651,6 +651,26 @@ impl Store {
         Ok(days)
     }
 
+    /// Find the monthly file containing a recorded day, defaulting to the latest date.
+    pub fn file_path(&self, date: Option<NaiveDate>) -> Result<PathBuf> {
+        if let Some(date) = date {
+            let path = self.dir.join(format!("{}.md", date.format("%Y-%m")));
+            let document = Document::read_or_empty(path)?;
+            ensure!(
+                document.days.iter().any(|day| day.date == date),
+                "No recorded day for {date}"
+            );
+            return Ok(document.path);
+        }
+        for path in self.paths()?.into_iter().rev() {
+            let document = Document::read(path)?;
+            if !document.days.is_empty() {
+                return Ok(document.path);
+            }
+        }
+        bail!("No recorded days. Run `krk new-day` first")
+    }
+
     pub fn previous(&self, before: NaiveDate) -> Result<Option<Day>> {
         for path in self.paths()?.into_iter().rev() {
             let month = path

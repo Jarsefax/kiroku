@@ -124,6 +124,114 @@ fn init_config_does_not_parse_or_replace_existing_invalid_configuration() {
 }
 
 #[test]
+fn file_prints_only_the_latest_recorded_days_path_without_changing_logs() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path().join("log directory with spaces 日本語");
+    fs::create_dir(&logs).unwrap();
+    let older = logs.join("2020-01.md");
+    let older_contents = "# 2020-01-31\n\n## To do\n- older item\n\n## Doing\n\n## Done\n";
+    fs::write(&older, older_contents).unwrap();
+    assert_eq!(success(&logs, &["file"]), format!("{}\n", older.display()));
+
+    // The newest day can be empty and in the future; a later empty file is ignored.
+    let latest = logs.join("9998-12.md");
+    let latest_contents = "# 9998-12-31\n\n## To do\n\n## Doing\n\n## Done\n";
+    fs::write(&latest, latest_contents).unwrap();
+    let empty = logs.join("9999-01.md");
+    fs::write(&empty, "<!-- kiroku-format: 1 -->\n").unwrap();
+    for args in [
+        &["file"][..],
+        &["f"],
+        &["file", "--color", "always"],
+        &["--no-separator", "file"],
+    ] {
+        let output = run(&logs, args);
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        assert!(output.stderr.is_empty());
+        assert_eq!(output.stdout, format!("{}\n", latest.display()).as_bytes());
+    }
+    assert_eq!(
+        success(&logs, &["f", "2020-01-31"]),
+        format!("{}\n", older.display())
+    );
+    assert_eq!(fs::read_to_string(older).unwrap(), older_contents);
+    assert_eq!(fs::read_to_string(latest).unwrap(), latest_contents);
+    assert_eq!(
+        fs::read_to_string(empty).unwrap(),
+        "<!-- kiroku-format: 1 -->\n"
+    );
+    assert_eq!(fs::read_dir(&logs).unwrap().count(), 3);
+    assert!(success(&logs, &["--help"]).contains("file"));
+    assert!(success(&logs, &["file", "--help"]).contains("YYYY-MM-DD"));
+}
+
+#[test]
+fn file_reports_missing_or_invalid_dates_without_printing_a_path_or_creating_logs() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path().join("missing logs");
+    for args in [&["file"][..], &["file", "2020-01-31"]] {
+        let output = run(&logs, args);
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("No recorded day"));
+        assert!(!logs.exists());
+    }
+    fs::create_dir(&logs).unwrap();
+    let path = logs.join("2020-01.md");
+    fs::write(&path, "<!-- no recorded days -->\n").unwrap();
+    assert!(!run(&logs, &["file"]).status.success());
+    let contents = "# 2020-01-31\n\n## To do\n\n## Doing\n\n## Done\n";
+    fs::write(&path, contents).unwrap();
+    for (date, error) in [
+        ("2020-01-30", "No recorded day for 2020-01-30"),
+        ("2020-02-01", "No recorded day for 2020-02-01"),
+        ("2020-02-30", "Invalid date"),
+        ("2020-1-31", "Invalid date"),
+    ] {
+        let output = run(&logs, &["file", date]);
+        assert!(!output.status.success(), "{date}");
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains(error));
+    }
+    assert_eq!(fs::read_to_string(path).unwrap(), contents);
+    assert_eq!(fs::read_dir(logs).unwrap().count(), 1);
+}
+
+#[test]
+fn file_resolves_configuration_home_expansion_and_relative_directory_overrides() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let config_dir = temp.path().join("config");
+    fs::create_dir_all(config_dir.join("kiroku")).unwrap();
+    fs::write(
+        config_dir.join("kiroku/config.toml"),
+        "data_dir = '~/configured logs'\n",
+    )
+    .unwrap();
+    for (logs, args) in [
+        (home.join("configured logs"), vec!["file"]),
+        (
+            temp.path().join("overridden logs"),
+            vec!["file", "--data-dir", "overridden logs"],
+        ),
+    ] {
+        fs::create_dir_all(&logs).unwrap();
+        let path = logs.join("2020-01.md");
+        fs::write(&path, "# 2020-01-31\n\n## To do\n\n## Doing\n\n## Done\n").unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_krk"))
+            .args(args)
+            .current_dir(temp.path())
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", &config_dir)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(output.stdout, format!("{}\n", path.display()).as_bytes());
+        assert!(output.stderr.is_empty());
+    }
+}
+
+#[test]
 fn no_separator_is_global_and_leaves_redirected_output_unchanged() {
     let temp = tempfile::tempdir().unwrap();
     for args in [
@@ -833,6 +941,8 @@ fn storage_version_checks_reach_cli_errors_and_preserve_logs() {
     for args in [
         &["list", "2026-10-06"][..],
         &["search", "updated"],
+        &["file"],
+        &["file", "2026-10-06"],
         &["todo", "new title"],
         &["new-day"],
         &["repeat", "1"],

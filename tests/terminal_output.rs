@@ -211,6 +211,7 @@ fn short_output_errors_and_informational_commands_have_no_separator() {
         &["list"][..],
         &["search", "missing"],
         &["path"],
+        &["file"],
         &["list", "--help"],
         &["--help"],
         &["--version"],
@@ -232,6 +233,15 @@ fn short_output_errors_and_informational_commands_have_no_separator() {
         success(terminal(temp.path(), &args, "xterm-256color", false)),
         success(redirected(temp.path(), &args))
     );
+    for args in [
+        &["file", "--color", "always"][..],
+        &["f", "--color", "always"],
+    ] {
+        let text = success(terminal(temp.path(), args, "xterm-256color", false));
+        assert_eq!(text, success(redirected(temp.path(), args)));
+        assert_eq!(text.lines().count(), 1);
+        assert!(!text.contains('\x1b'));
+    }
     let rejected = terminal(temp.path(), &["list", "--clear"], "xterm-256color", false);
     assert!(!rejected.status.success());
     assert!(rejected.stdout.is_empty());
