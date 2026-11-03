@@ -433,6 +433,22 @@ impl Document {
         self.reparse()
     }
 
+    fn remove_empty_day(&mut self, day_index: usize) -> Result<bool> {
+        let day = &self.days[day_index];
+        // Called after section cleanup, so any remaining nonblank content
+        // under the date is a comment to preserve with its recorded day.
+        if !day.items.is_empty()
+            || self.lines[day.start + 1..day.end]
+                .iter()
+                .any(|line| !line.trim().is_empty())
+        {
+            return Ok(false);
+        }
+        self.lines.drain(day.start..day.end);
+        self.reparse()?;
+        Ok(true)
+    }
+
     fn insert_items(
         &mut self,
         day_index: usize,
@@ -827,10 +843,11 @@ impl Store {
                 previous.reparse()?;
             }
             let cleaned = previous.remove_empty_sections(index)?;
+            let removed_day = previous.remove_empty_day(index)?;
             if previous.path == path {
                 (previous, None)
             } else {
-                let source = (moved || cleaned).then_some(previous);
+                let source = (moved || cleaned || removed_day).then_some(previous);
                 (Document::read_or_empty(path)?, source)
             }
         } else {

@@ -591,6 +591,38 @@ fn new_day_removes_empty_closed_day_sections_and_dated_additions_recreate_them()
 }
 
 #[test]
+fn new_day_drops_a_todo_only_source_and_leaves_skipped_dates_missing() {
+    for (command, gap) in [("new-day", 2), ("n", 35)] {
+        let temp = tempfile::tempdir().unwrap();
+        let logs = temp.path();
+        let today = Local::now().date_naive();
+        let previous = today - chrono::Duration::days(gap);
+        let source_date = previous.to_string();
+        for _ in 0..2 {
+            success(logs, &["todo", "duplicate", "--date", &source_date]);
+        }
+        success(logs, &[command]);
+        let store = Store::new(logs.to_path_buf());
+        let days = store.days(None).unwrap();
+        assert_eq!(days.len(), 1);
+        assert_eq!(days[0].date, today);
+        assert_eq!(days[0].items.len(), 2);
+        assert!(store.previous(today).unwrap().is_none());
+        assert!(success(logs, &["list", &source_date]).contains("No recorded days"));
+        let output = success(logs, &["list", &format!("{previous}..{today}")]);
+        assert!(!output.contains(&source_date));
+        success(logs, &["doing", "2"]);
+        success(logs, &["done", "backfilled", "--date", &source_date]);
+        assert_eq!(
+            store.previous(today).unwrap().unwrap().items[0].title,
+            "backfilled"
+        );
+        assert_eq!(store.active().unwrap().unwrap().date, today);
+        assert!(success(logs, &[command]).contains("already started"));
+    }
+}
+
+#[test]
 fn new_day_loads_recurring_todos_with_saved_and_overridden_data_directories() {
     for override_directory in [false, true] {
         let temp = tempfile::tempdir().unwrap();

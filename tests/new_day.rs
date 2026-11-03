@@ -489,3 +489,163 @@ fn an_existing_today_leaves_both_days_unchanged() {
     assert_eq!(fs::read(destination_path).unwrap(), destination);
     assert!(!store.dir.join("backups").exists());
 }
+
+#[test]
+fn rollover_removes_empty_source_days_without_filling_skipped_dates() {
+    for previous in ["2026-10-01", "2026-09-30", "2026-08-31"] {
+        for newline in ["\n", "\r\n"] {
+            for (header, body, carried) in [
+                ("", "## To do\n\n## Doing\n\n## Done\n", 0),
+                (
+                    "<!-- kiroku-format: 1 -->\n\n",
+                    "## To do\n- duplicate\n- duplicate\n## Doing\n## Done\n",
+                    2,
+                ),
+                ("<!-- kiroku-format: 2 -->\n\n", "", 0),
+            ] {
+                let temp = tempfile::tempdir().unwrap();
+                let store = Store::new(temp.path().to_path_buf());
+                let path = store
+                    .dir
+                    .join(format!("{}.md", date(previous).format("%Y-%m")));
+                let original = format!("{header}# {previous}\n{body}")
+                    .trim_end_matches('\n')
+                    .replace('\n', newline);
+                fs::write(&path, &original).unwrap();
+                assert!(store.new_day(date("2026-10-02")).unwrap());
+
+                let days = store.days(None).unwrap();
+                assert_eq!(days.len(), 1);
+                assert_eq!(days[0].date, date("2026-10-02"));
+                assert_eq!(days[0].items.len(), carried);
+                assert!(
+                    days[0]
+                        .items
+                        .iter()
+                        .all(|item| item.title == "duplicate" && item.status == Status::Todo)
+                );
+                assert!(store.previous(date("2026-10-02")).unwrap().is_none());
+                assert!(store.file_path(Some(date(previous))).is_err());
+                let saved = fs::read_to_string(&path).unwrap();
+                assert!(!saved.contains(&format!("# {previous}")));
+                if previous == "2026-10-01" {
+                    assert_eq!(
+                        fs::read_to_string(store.dir.join("backups/2026-10.md.000001.bak"))
+                            .unwrap(),
+                        original
+                    );
+                } else {
+                    assert_eq!(saved.trim(), "<!-- kiroku-format: 2 -->");
+                    if newline == "\r\n" {
+                        assert!(!saved.replace("\r\n", "").contains('\n'));
+                    }
+                }
+                if previous == "2026-08-31" {
+                    assert!(!store.dir.join("2026-09.md").exists());
+                }
+                let destination = store.dir.join("2026-10.md");
+                let today_bytes = fs::read(&destination).unwrap();
+                assert!(!store.new_day(date("2026-10-02")).unwrap());
+                assert_eq!(fs::read_to_string(path).unwrap(), saved);
+                assert_eq!(fs::read(destination).unwrap(), today_bytes);
+            }
+        }
+    }
+}
+
+#[test]
+fn gaps_and_deleted_days_allow_rollover_listing_and_later_dated_edits() {
+    for previous in ["2026-10-02", "2026-09-30"] {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let older_date = date(previous) - chrono::Duration::days(1);
+        let older = format!("# {older_date}\n## To do\n## Doing\n## Done\n- earlier history\n\n");
+        let source = format!("# {previous}\n## To do\n- carried\n## Doing\n## Done\n");
+        let future = "# 2026-10-20\n## To do\n- future plan\n## Doing\n## Done\n";
+        let source_path = store
+            .dir
+            .join(format!("{}.md", date(previous).format("%Y-%m")));
+        let destination = store.dir.join("2026-10.md");
+        if previous == "2026-10-02" {
+            fs::write(&source_path, format!("{older}{source}{future}")).unwrap();
+        } else {
+            fs::write(&source_path, format!("{older}{source}")).unwrap();
+            fs::write(&destination, future).unwrap();
+        }
+
+        store.new_day(date("2026-10-05")).unwrap();
+        store.new_day(date("2026-10-08")).unwrap();
+        let days = store.days(None).unwrap();
+        assert_eq!(
+            days.iter().map(|day| day.date).collect::<Vec<_>>(),
+            [older_date, date("2026-10-08"), date("2026-10-20")]
+        );
+        assert_eq!(
+            store.previous(date("2026-10-08")).unwrap().unwrap().date,
+            older_date
+        );
+        let active = store.active_on(date("2026-10-08")).unwrap().unwrap();
+        assert_eq!(active.date, date("2026-10-08"));
+        assert_eq!(active.items[0].title, "carried");
+        let view = kiroku::listing::select(&store, Some("2026-10-06"), date("2026-10-08")).unwrap();
+        assert!(view.days.is_empty());
+        let view = kiroku::listing::select(
+            &store,
+            Some(&format!("{older_date}..2026-10-20")),
+            date("2026-10-08"),
+        )
+        .unwrap();
+        assert_eq!(view.days.len(), 3);
+        assert!(fs::read_to_string(&destination).unwrap().ends_with(future));
+
+        store
+            .add_on_date(date(previous), "backfilled", Status::Done)
+            .unwrap();
+        assert_eq!(
+            store
+                .days(None)
+                .unwrap()
+                .iter()
+                .map(|day| day.date)
+                .collect::<Vec<_>>(),
+            [
+                older_date,
+                date(previous),
+                date("2026-10-08"),
+                date("2026-10-20")
+            ]
+        );
+        assert_eq!(
+            store.active_on(date("2026-10-08")).unwrap().unwrap().date,
+            active.date
+        );
+        assert_eq!(store.file_path(Some(date(previous))).unwrap(), source_path);
+        let saved = fs::read(&destination).unwrap();
+        assert!(!store.new_day(date("2026-10-08")).unwrap());
+        assert_eq!(fs::read(destination).unwrap(), saved);
+    }
+}
+
+#[test]
+fn rollover_leaves_older_empty_records_unchanged() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::new(temp.path().to_path_buf());
+    let path = store.dir.join("2026-10.md");
+    let older = "# 2026-10-01\n\n";
+    fs::write(
+        &path,
+        format!("<!-- kiroku-format: 2 -->\n\n{older}# 2026-10-02\n## To do\n- pending\n"),
+    )
+    .unwrap();
+    store.new_day(date("2026-10-05")).unwrap();
+    assert_eq!(
+        store
+            .days(None)
+            .unwrap()
+            .iter()
+            .map(|day| day.date)
+            .collect::<Vec<_>>(),
+        [date("2026-10-01"), date("2026-10-05")]
+    );
+    assert!(fs::read_to_string(path).unwrap().contains(older));
+}

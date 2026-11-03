@@ -561,7 +561,10 @@ fn selectors_have_calendar_boundaries_and_no_fallback() {
     store.new_day(date("2026-09-30")).unwrap();
     store.new_day(date("2026-10-02")).unwrap();
     let range = listing::select(&store, Some("2026-09-30..2026-10-02"), today).unwrap();
-    assert_eq!(range.days.len(), 2);
+    assert_eq!(
+        range.days.iter().map(|day| day.date).collect::<Vec<_>>(),
+        [date("2026-10-02")]
+    );
     let yesterday = listing::select(&store, Some("yesterday"), today).unwrap();
     assert!(yesterday.days.is_empty());
     assert!(listing::render(&yesterday, today).contains("No recorded days for yesterday"));

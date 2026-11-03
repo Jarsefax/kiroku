@@ -156,7 +156,15 @@ fn new_months_have_one_header_and_rollover_preserves_doing_done_and_older_histor
             .count(),
         1
     );
-    assert_eq!(store.days(None).unwrap().len(), 4);
+    assert_eq!(
+        store
+            .days(None)
+            .unwrap()
+            .iter()
+            .map(|day| day.date)
+            .collect::<Vec<_>>(),
+        ["2026-10-05", "2026-10-06", "2026-11-03"].map(|day| parse_date(day).unwrap())
+    );
 }
 
 #[test]

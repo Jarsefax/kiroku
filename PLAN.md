@@ -79,8 +79,9 @@ meeting" or "monthly op meeting - september".
   copies its Doing items into the new day's To do section, preserving order
   and duplicates. Keep Doing and Done entries on the previously active day
   as daily history. Remove empty section headings and their following blank
-  lines from the day being closed, preserving its date and all comments as
-  day notes. Leave other days alone; recreate missing sections on dated edits.
+  lines from the day being closed, preserving all comments as day notes.
+  Remove the date heading too if no items or notes remain. Keep note-only days
+  and leave other days alone; recreate missing records or sections on dated edits.
   Existing logs need no bulk migration; earlier removed Doing entries are
   not reconstructed.
 - The new day's Doing and Done sections start empty.
@@ -152,7 +153,8 @@ These defaults were adopted for the first implementation.
 - The TUI supports browsing days, navigating items, adding titles, and
   changing status with keyboard shortcuts.
 - If days are skipped, carry unfinished items from the most recent recorded
-  day, without creating intervening files.
+  day, without creating intervening records or files. Gaps in recorded dates
+  are valid within and across monthly files.
 - If today's record already exists, the new-day command leaves it intact
   and reports that the day has already been started.
 - `new-day` starts today only. It can insert today before existing future
@@ -160,8 +162,9 @@ These defaults were adopted for the first implementation.
   If today's record already exists, leave it unchanged.
 - Rollover within a month updates both days in one save. Across months,
   prepare both files and backups, save and flush the destination first,
-  then remove source To do entries and empty headings. Leave the source file
-  unchanged if it needs neither removal nor cleanup. Preserve recovery
+  then remove source To do entries, empty headings, and the day itself if no
+  items or notes remain. Leave the source file unchanged if it needs neither
+  removal nor cleanup. Preserve recovery
   backups until both files are durable, then apply the usual closed-month cleanup.
 - `--date YYYY-MM-DD` targets title additions and item moves through `todo`,
   `doing`, and `done`, and copies through `repeat` or `list`/`search --repeat`.

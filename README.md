@@ -308,11 +308,13 @@ its Doing items into the new day's To do section, preserving their order and
 duplicate titles. Doing entries stay on their original day so you can see what
 you worked on each day. Done entries and comments also stay in place.
 Empty section headings are removed from that day, including the emptied To do
-section. Comments remain as day notes; a day with no items keeps its date and
-notes. The new day starts with all three section headings. Later dated additions,
+section. Comments remain as day notes. If no items or notes remain, that day's
+date heading is also removed. A day containing notes is kept even without items.
+The new day starts with all three section headings. Later dated additions,
 moves, or copies recreate an omitted section when needed.
-Other earlier records remain intact; skipped days are not created. Starting
-an already recorded today leaves all records unchanged. `new-day` always
+Other earlier records remain intact; skipped days are not created. Gaps between
+recorded dates are supported, including across months. Starting an already
+recorded today leaves all records unchanged. `new-day` always
 starts today; date-targeted additions create missing records without rollover.
 Existing logs need no migration; past Doing entries already removed by earlier
 versions are not reconstructed.
@@ -337,11 +339,10 @@ recurring todos as usual. An already-started day is still left unchanged.
 Within a month, rollover updates both days in one atomic save. Across months,
 it uses the same destination-first saving as explicit item moves: both logs
 and backups are prepared before replacement, and the new day is flushed
-before To do items and empty headings are removed from the source. If there
-are no To do items or empty headings, the source file is left unchanged.
+before To do items, empty headings, and a fully emptied day are removed from
+the source. If the source needs no cleanup, its file is left unchanged.
 If a cross-month save reports partial completion, inspect both dates before
-retrying; interrupted
-rollover may leave unfinished items in both places.
+retrying; interrupted rollover may leave unfinished items in both places.
 
 If today has not been started, `krk list` says so and shows the latest recorded
 day on or before today. If today exists but is empty, it shows both today
@@ -580,7 +581,8 @@ Each month has a file such as `2026-10.md`:
 Append another date heading for each recorded day, with sections as needed.
 Dates must be unique, chronological, and belong to the filename's month.
 Keep section names and their order as shown; empty sections may be omitted
-in format 2. A day with no items may contain only its date and notes.
+in format 2. A day with no items may contain only its date and notes. Missing
+dates are allowed; Kiroku does not fill gaps with empty records.
 Items use `- title` and need a preceding status heading on the same day.
 Blank lines and standalone HTML comments (`<!-- notes -->`, including
 multiline comments) are supported and preserved. Other prose or Markdown
@@ -610,7 +612,8 @@ update adds or upgrades the header to format 2 while preserving other untouched
 content and the LF/CRLF newline convention; the usual backup keeps the exact
 previous bytes. Reads and no-op commands do not upgrade files or create backups.
 Historical files remain unmodified unless they are updated. No bulk migration
-is needed. `new-day` removes empty headings only from the day it closes.
+is needed. `new-day` cleans up only the day it closes, removing the entire
+record if no items or notes remain. The Markdown format stays at version 2.
 
 Kiroku rejects unsupported versions and malformed, duplicate, or misplaced
 headers whenever it reads a file. A newer version reports the file and line
@@ -808,6 +811,7 @@ cargo test --locked
 Tests cover moving To do and copying Doing items across weekends/months,
 preserving Doing and Done history on the source day, numbered duplicate titles,
 empty-heading cleanup and recreating omitted sections through dated edits,
+removing emptied days while preserving notes and supporting gaps in dates,
 date selection and list fallback, manual comments and CRLF preservation,
 legacy and versioned logs, unsupported-format protection, malformed-file
 protection, stale selections, concurrent writes, configuration,

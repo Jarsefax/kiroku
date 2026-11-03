@@ -1430,7 +1430,7 @@ days = ["{}"]
         let search = app.search.as_ref().unwrap();
         assert_eq!(search.results.len(), 3);
         assert_eq!(search.selected, 1);
-        assert_eq!(search.results[search.selected], (2, 1));
+        assert_eq!(search.results[search.selected], (1, 1));
         press(&mut app, KeyCode::Char('c'));
         let active = store.active().unwrap().unwrap();
         assert_eq!(active.date, today);
@@ -1444,7 +1444,7 @@ days = ["{}"]
         assert_eq!(history.items.len(), 1);
         assert_eq!(history.items[0].title, "matching title");
         assert_eq!(history.items[0].status, Status::Doing);
-        assert!(store.previous(today).unwrap().unwrap().items.is_empty());
+        assert_eq!(store.previous(today).unwrap().unwrap().date, source_date);
     }
 
     #[test]
