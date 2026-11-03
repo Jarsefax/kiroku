@@ -116,15 +116,19 @@ fn repeat_history_preserves_source_bytes_within_and_across_months() {
         );
         fs::write(&path, &original).unwrap();
         store.new_day(date("2026-10-02")).unwrap();
+        let rolled_over = fs::read_to_string(&path).unwrap();
         store
             .repeat(Some(source_date), 2, Status::Doing, None, None)
             .unwrap();
         assert_eq!(titles(&store), [("möte 日本語".into(), Status::Doing)]);
         let text = fs::read_to_string(&path).unwrap();
         if source_date.month() == 9 {
-            assert_eq!(text, original);
+            assert_eq!(text, rolled_over);
         } else {
-            assert!(text.starts_with(&format!("<!-- kiroku-format: 1 -->\r\n\r\n{original}")));
+            let history = original
+                .replace("## To do\r\n\r\n", "")
+                .replace("## Doing\r\n\r\n", "");
+            assert!(text.starts_with(&format!("<!-- kiroku-format: 2 -->\r\n\r\n{history}")));
             assert!(!text.replace("\r\n", "").contains('\n'));
         }
         assert!(
@@ -578,7 +582,7 @@ fn comments_blank_lines_crlf_and_previous_days_survive_mutations() {
         .change(Change::Add("new title".into(), Status::Todo), None)
         .unwrap();
     let result = fs::read_to_string(store.dir.join("2026-10.md")).unwrap();
-    assert!(result.starts_with(&format!("<!-- kiroku-format: 1 -->\r\n\r\n{prefix}")));
+    assert!(result.starts_with(&format!("<!-- kiroku-format: 2 -->\r\n\r\n{prefix}")));
     assert!(result.contains("<!-- keep this comment -->\r\n"));
     assert!(result.contains("- möte 日本語\r\n"));
     assert!(!result.replace("\r\n", "").contains('\n'));
@@ -771,11 +775,13 @@ fn reorder_preserves_sections_comments_line_endings_and_rejects_stale_views() {
         store
             .change(Change::Reorder(2, Direction::Down, 1), Some(&initial))
             .unwrap();
-        let expected = original.replacen(
-            &format!("- duplicate{newline}- last todo  "),
-            &format!("- last todo  {newline}- duplicate"),
-            1,
-        );
+        let expected = original
+            .replacen("kiroku-format: 1", "kiroku-format: 2", 1)
+            .replacen(
+                &format!("- duplicate{newline}- last todo  "),
+                &format!("- last todo  {newline}- duplicate"),
+                1,
+            );
         assert_eq!(fs::read_to_string(&path).unwrap(), expected);
         assert!(
             store

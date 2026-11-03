@@ -306,7 +306,11 @@ for its weekday, or starts empty when none match.
 Starting a new day moves the previous recorded day's To do items and copies
 its Doing items into the new day's To do section, preserving their order and
 duplicate titles. Doing entries stay on their original day so you can see what
-you worked on each day. Done entries, headings, and comments also stay in place.
+you worked on each day. Done entries and comments also stay in place.
+Empty section headings are removed from that day, including the emptied To do
+section. Comments remain as day notes; a day with no items keeps its date and
+notes. The new day starts with all three section headings. Later dated additions,
+moves, or copies recreate an omitted section when needed.
 Other earlier records remain intact; skipped days are not created. Starting
 an already recorded today leaves all records unchanged. `new-day` always
 starts today; date-targeted additions create missing records without rollover.
@@ -333,9 +337,10 @@ recurring todos as usual. An already-started day is still left unchanged.
 Within a month, rollover updates both days in one atomic save. Across months,
 it uses the same destination-first saving as explicit item moves: both logs
 and backups are prepared before replacement, and the new day is flushed
-before To do items are removed from the source. When there are no To do items
-to move, the source file is left unchanged. If a cross-month save reports
-partial completion, inspect both dates before retrying; interrupted
+before To do items and empty headings are removed from the source. If there
+are no To do items or empty headings, the source file is left unchanged.
+If a cross-month save reports partial completion, inspect both dates before
+retrying; interrupted
 rollover may leave unfinished items in both places.
 
 If today has not been started, `krk list` says so and shows the latest recorded
@@ -558,7 +563,7 @@ vim "$(krk file 2026-10-02)"
 Each month has a file such as `2026-10.md`:
 
 ```markdown
-<!-- kiroku-format: 1 -->
+<!-- kiroku-format: 2 -->
 
 # 2026-10-06
 
@@ -572,9 +577,11 @@ Each month has a file such as `2026-10.md`:
 - update documentation
 ```
 
-Append another date heading and the same three sections for each recorded
-day. Dates must be unique, chronological, and belong to the filename's month.
-Keep section names and their order as shown. Items use `- title`.
+Append another date heading for each recorded day, with sections as needed.
+Dates must be unique, chronological, and belong to the filename's month.
+Keep section names and their order as shown; empty sections may be omitted
+in format 2. A day with no items may contain only its date and notes.
+Items use `- title` and need a preceding status heading on the same day.
 Blank lines and standalone HTML comments (`<!-- notes -->`, including
 multiline comments) are supported and preserved. Other prose or Markdown
 structures produce a parse error rather than being silently rewritten.
@@ -589,18 +596,21 @@ app's lock.
 
 ### Storage versions and compatibility
 
-The monthly Markdown format is **version 1**, independent of the app release
-shown by `krk --version`. New files start with `<!-- kiroku-format: 1 -->`.
+The monthly Markdown format is **version 2**, independent of the app release
+shown by `krk --version`. New files start with `<!-- kiroku-format: 2 -->`.
 The header applies to the entire file and appears only once, before the first
 date heading. Leading blank lines and ordinary comments are allowed. Comments
 beginning with `kiroku-format` after the opening `<!--` are reserved for this
 single-line header; the version must be a positive decimal integer.
 
-Existing files without a header are validated as format 1. Reading them does
-not change them. Their next actual update adds the header while preserving
-untouched content and the LF/CRLF newline convention; the usual backup keeps
-the exact previous bytes. No-op commands do not add a header or create a
-backup. Historical files remain unmodified unless they are updated.
+Kiroku reads both formats 1 and 2. Format 1 requires all three section headings;
+format 2 allows any empty section to be omitted. Files without a header are
+validated as format 1. Reading them does not change them. Their next actual
+update adds or upgrades the header to format 2 while preserving other untouched
+content and the LF/CRLF newline convention; the usual backup keeps the exact
+previous bytes. Reads and no-op commands do not upgrade files or create backups.
+Historical files remain unmodified unless they are updated. No bulk migration
+is needed. `new-day` removes empty headings only from the day it closes.
 
 Kiroku rejects unsupported versions and malformed, duplicate, or misplaced
 headers whenever it reads a file. A newer version reports the file and line
@@ -608,13 +618,10 @@ and asks you to upgrade Kiroku before reading or changing it. Do not remove
 or lower a version header to bypass this check. Builds predating version
 checks ignore HTML comments and cannot provide this protection.
 
-Format 1 needs no data conversion. Future format changes will require
-documented compatibility and migration steps, with validation, repeatable
-execution, recovery after interruption, and migration snapshots retained
-separately from the rotating `backups/` directory. No migration command or
-automatic conversion is implemented yet. App releases that retain format 1
-do not need to migrate logs. Configuration has its own TOML structure and is
-not versioned by the monthly-file header.
+Use Kiroku 0.14.0 or later to read format 2 files. Older builds that check
+versions reject them. Format 2 changes section requirements without changing
+item titles, statuses, or dates. Configuration has its own TOML structure and
+is not versioned by the monthly-file header.
 
 ### Backups and failed saves
 
@@ -800,6 +807,7 @@ cargo test --locked
 
 Tests cover moving To do and copying Doing items across weekends/months,
 preserving Doing and Done history on the source day, numbered duplicate titles,
+empty-heading cleanup and recreating omitted sections through dated edits,
 date selection and list fallback, manual comments and CRLF preservation,
 legacy and versioned logs, unsupported-format protection, malformed-file
 protection, stale selections, concurrent writes, configuration,

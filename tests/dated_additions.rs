@@ -165,7 +165,7 @@ fn dated_additions_reject_unsupported_malformed_and_nonregular_targets() {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::new(temp.path().to_path_buf());
     let path = store.dir.join("2026-10.md");
-    for content in ["<!-- kiroku-format: 2 -->\n", "# 2026-10-06\n## To do\n"] {
+    for content in ["<!-- kiroku-format: 3 -->\n", "# 2026-10-06\n## To do\n"] {
         fs::write(&path, content).unwrap();
         assert!(
             store

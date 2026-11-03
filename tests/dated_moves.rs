@@ -182,7 +182,7 @@ fn invalid_sources_positions_and_stale_snapshots_do_not_create_destinations() {
         assert!(!store.dir.join("2026-09.md").exists());
         assert!(!store.dir.join("backups").exists());
     }
-    for invalid in ["<!-- kiroku-format: 2 -->\n", "unrecognized content\n"] {
+    for invalid in ["<!-- kiroku-format: 3 -->\n", "unrecognized content\n"] {
         let destination = store.dir.join("2026-09.md");
         fs::write(&destination, invalid).unwrap();
         assert!(

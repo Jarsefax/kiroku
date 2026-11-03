@@ -546,6 +546,51 @@ fn new_day_command_moves_todos_copies_doing_and_keeps_doing_and_done_across_mont
 }
 
 #[test]
+fn new_day_removes_empty_closed_day_sections_and_dated_additions_recreate_them() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = temp.path();
+    let today = Local::now().date_naive();
+    let previous = today - chrono::Duration::days(1);
+    let path = logs.join(format!("{}.md", previous.format("%Y-%m")));
+    fs::write(
+        &path,
+        format!("# {previous}\n\n## To do\n- pending\n\n## Doing\n\n## Done\n- finished\n"),
+    )
+    .unwrap();
+    success(logs, &["new-day"]);
+    let store = Store::new(logs.to_path_buf());
+    let active = store.active().unwrap().unwrap();
+    let saved = fs::read_to_string(&path).unwrap();
+    let closed_day = saved
+        .split(&format!("# {previous}\n"))
+        .nth(1)
+        .unwrap()
+        .split("\n# ")
+        .next()
+        .unwrap();
+    assert!(!closed_day.contains("## To do"));
+    assert!(!closed_day.contains("## Doing"));
+    assert!(closed_day.contains("## Done\n- finished\n"));
+    success(logs, &["list", &previous.to_string()]);
+    success(
+        logs,
+        &["todo", "follow-up", "--date", &previous.to_string()],
+    );
+    let history = store.previous(today).unwrap().unwrap();
+    assert_eq!(
+        history
+            .items
+            .iter()
+            .map(|item| (item.title.as_str(), item.status))
+            .collect::<Vec<_>>(),
+        [("follow-up", Status::Todo), ("finished", Status::Done)]
+    );
+    let updated_active = store.active().unwrap().unwrap();
+    assert_eq!(updated_active.items.len(), active.items.len());
+    assert_eq!(updated_active.items[0].title, active.items[0].title);
+}
+
+#[test]
 fn new_day_loads_recurring_todos_with_saved_and_overridden_data_directories() {
     for override_directory in [false, true] {
         let temp = tempfile::tempdir().unwrap();
@@ -948,11 +993,11 @@ fn storage_version_checks_reach_cli_errors_and_preserve_logs() {
     assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
     success(logs, &["edit", "1", "updated title"]);
     let supported = fs::read_to_string(&path).unwrap();
-    assert!(supported.starts_with("<!-- kiroku-format: 1 -->\n"));
+    assert!(supported.starts_with("<!-- kiroku-format: 2 -->\n"));
     let backup_path = logs.join("backups/2026-10.md.000001.bak");
     assert_eq!(fs::read_to_string(&backup_path).unwrap(), legacy);
 
-    let future = supported.replacen("kiroku-format: 1", "kiroku-format: 2", 1);
+    let future = supported.replacen("kiroku-format: 2", "kiroku-format: 3", 1);
     fs::write(&path, &future).unwrap();
     for args in [
         &["list", "2026-10-06"][..],
@@ -967,7 +1012,7 @@ fn storage_version_checks_reach_cli_errors_and_preserve_logs() {
         assert!(!result.status.success(), "{args:?}");
         let error = String::from_utf8_lossy(&result.stderr);
         assert!(error.contains("2026-10.md:1"), "{error}");
-        assert!(error.contains("Storage format 2 is unsupported"), "{error}");
+        assert!(error.contains("Storage format 3 is unsupported"), "{error}");
         assert!(error.contains("Upgrade Kiroku"), "{error}");
         assert!(result.stdout.is_empty());
         assert_eq!(fs::read_to_string(&path).unwrap(), future);

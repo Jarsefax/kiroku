@@ -9,10 +9,10 @@ use std::{
 };
 
 // Independent of the application release version in Cargo.toml.
-const STORAGE_FORMAT_VERSION: u32 = 1;
+const STORAGE_FORMAT_VERSION: u32 = 2;
 
 fn parse_format_version(comment: &str) -> Result<u32> {
-    let invalid = || "Invalid kiroku-format header; expected <!-- kiroku-format: 1 -->";
+    let invalid = || "Invalid kiroku-format header; expected <!-- kiroku-format: N -->";
     let value = comment
         .strip_prefix("kiroku-format:")
         .and_then(|text| text.strip_suffix("-->"))
@@ -26,8 +26,8 @@ fn parse_format_version(comment: &str) -> Result<u32> {
     let version: u32 = value.parse().with_context(invalid)?;
     ensure!(version > 0, "{}", invalid());
     ensure!(
-        version == STORAGE_FORMAT_VERSION,
-        "Storage format {version} is unsupported; this app supports format {STORAGE_FORMAT_VERSION}. Upgrade Kiroku before reading or changing this file"
+        version <= STORAGE_FORMAT_VERSION,
+        "Storage format {version} is unsupported; this app supports formats 1 through {STORAGE_FORMAT_VERSION}. Upgrade Kiroku before reading or changing this file"
     );
     Ok(version)
 }
@@ -68,7 +68,7 @@ pub struct Item {
 pub struct Day {
     pub date: NaiveDate,
     pub items: Vec<Item>,
-    headings: [usize; 3],
+    headings: [Option<usize>; 3],
     start: usize,
     end: usize,
 }
@@ -135,7 +135,8 @@ struct Document {
     lines: Vec<String>,
     days: Vec<Day>,
     newline: &'static str,
-    has_format_header: bool,
+    format_header: Option<usize>,
+    format_version: u32,
 }
 
 impl Document {
@@ -161,13 +162,22 @@ impl Document {
     }
 
     fn parse(path: PathBuf, original: Option<String>) -> Result<Self> {
+        Self::parse_with_section_rules(path, original, false)
+    }
+
+    fn parse_with_section_rules(
+        path: PathBuf,
+        original: Option<String>,
+        allow_omitted_sections: bool,
+    ) -> Result<Self> {
         let text = original.as_deref().unwrap_or("");
         let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
         let lines: Vec<String> = text.split_inclusive('\n').map(str::to_owned).collect();
         let mut days: Vec<Day> = vec![];
         let mut status = None;
         let mut in_comment = false;
-        let mut has_format_header = false;
+        let mut format_header = None;
+        let mut format_version = 1;
         for (index, raw) in lines.iter().enumerate() {
             let line = raw.trim_end_matches(['\r', '\n']);
             let trimmed = line.trim();
@@ -189,7 +199,7 @@ impl Document {
                 let comment = comment.trim_start();
                 if comment.starts_with("kiroku-format") {
                     ensure!(
-                        !has_format_header,
+                        format_header.is_none(),
                         "{}:{}: duplicate kiroku-format header",
                         path.display(),
                         index + 1
@@ -200,9 +210,9 @@ impl Document {
                         path.display(),
                         index + 1
                     );
-                    parse_format_version(comment)
+                    format_version = parse_format_version(comment)
                         .with_context(|| format!("{}:{}", path.display(), index + 1))?;
-                    has_format_header = true;
+                    format_header = Some(index);
                 }
                 if let Some((_, tail)) = trimmed.split_once("-->") {
                     ensure!(tail.trim().is_empty(), "{}", invalid());
@@ -236,7 +246,7 @@ impl Document {
                 days.push(Day {
                     date,
                     items: vec![],
-                    headings: [usize::MAX; 3],
+                    headings: [None; 3],
                     start: index,
                     end: lines.len(),
                 });
@@ -250,7 +260,7 @@ impl Document {
                     .last_mut()
                     .context("A status heading needs a preceding date heading")?;
                 ensure!(
-                    day.headings[next.index()] == usize::MAX,
+                    day.headings[next.index()].is_none(),
                     "{}:{}: duplicate status section",
                     path.display(),
                     index + 1
@@ -263,7 +273,7 @@ impl Document {
                         index + 1
                     );
                 }
-                day.headings[next.index()] = index;
+                day.headings[next.index()] = Some(index);
                 status = Some(next.index());
             } else if let Some(title) = line.strip_prefix("- ") {
                 let current = status.context("An item needs a preceding status heading")?;
@@ -282,13 +292,15 @@ impl Document {
             }
         }
         ensure!(!in_comment, "{}: unclosed HTML comment", path.display());
-        for day in &days {
-            ensure!(
-                !day.headings.contains(&usize::MAX),
-                "{}: {} needs To do, Doing, and Done sections",
-                path.display(),
-                day.date
-            );
+        if format_version == 1 && !allow_omitted_sections {
+            for day in &days {
+                ensure!(
+                    day.headings.iter().all(Option::is_some),
+                    "{}: {} needs To do, Doing, and Done sections in format 1",
+                    path.display(),
+                    day.date
+                );
+            }
         }
         Ok(Self {
             path,
@@ -296,7 +308,8 @@ impl Document {
             lines,
             days,
             newline,
-            has_format_header,
+            format_header,
+            format_version,
         })
     }
 
@@ -316,12 +329,28 @@ impl Document {
             section.len() + 1,
             status.label()
         );
+        let Some(heading) = day.headings[status.index()] else {
+            let insertion = day.headings[status.index() + 1..]
+                .iter()
+                .flatten()
+                .next()
+                .copied()
+                .unwrap_or(day.end);
+            if insertion > 0 && !self.lines[insertion - 1].ends_with('\n') {
+                self.lines[insertion - 1].push_str(self.newline);
+            }
+            self.lines.splice(
+                insertion..insertion,
+                [
+                    format!("## {}{}", status.label(), self.newline),
+                    format!("- {title}{}", self.newline),
+                    self.newline.to_owned(),
+                ],
+            );
+            return Ok(());
+        };
         let insertion = section.get(position - 1).map_or_else(
-            || {
-                section
-                    .last()
-                    .map_or(day.headings[status.index()] + 1, |item| item.line + 1)
-            },
+            || section.last().map_or(heading + 1, |item| item.line + 1),
             |item| item.line,
         );
         if insertion > 0 && !self.lines[insertion - 1].ends_with('\n') {
@@ -361,8 +390,39 @@ impl Document {
     }
 
     fn reparse(&mut self) -> Result<()> {
-        self.days = Self::parse(self.path.clone(), Some(self.lines.concat()))?.days;
+        // Edits use format 2's section rules. Upgrade the serialized header
+        // only if the final contents differ, so no-op edits keep their bytes.
+        let parsed =
+            Self::parse_with_section_rules(self.path.clone(), Some(self.lines.concat()), true)?;
+        self.days = parsed.days;
+        self.format_header = parsed.format_header;
+        self.format_version = parsed.format_version;
         Ok(())
+    }
+
+    fn remove_empty_sections(&mut self, day_index: usize) -> Result<bool> {
+        let day = &self.days[day_index];
+        let mut ranges = vec![];
+        for status in Status::ALL {
+            if day.items.iter().any(|item| item.status == status) {
+                continue;
+            }
+            if let Some(heading) = day.headings[status.index()] {
+                let end = (heading + 1..day.end)
+                    .find(|&line| !self.lines[line].trim().is_empty())
+                    .unwrap_or(day.end);
+                ranges.push(heading..end);
+            }
+        }
+        if ranges.is_empty() {
+            return Ok(false);
+        }
+        // Keep comments as day notes, including multiline comment contents.
+        for range in ranges.into_iter().rev() {
+            self.lines.drain(range);
+        }
+        self.reparse()?;
+        Ok(true)
     }
 
     fn remove_items(&mut self, items: &[Item]) -> Result<()> {
@@ -466,13 +526,26 @@ impl Document {
 
     fn contents(&self) -> String {
         let mut contents = self.lines.concat();
-        // Legacy files are format 1 after validation. Annotate only an actual
-        // change, so reads and no-op edits never rewrite or back up a file.
-        if !self.has_format_header && self.original.as_deref() != Some(contents.as_str()) {
-            contents = format!(
-                "<!-- kiroku-format: {STORAGE_FORMAT_VERSION} -->{}{}{contents}",
-                self.newline, self.newline
-            );
+        if self.original.as_deref() != Some(contents.as_str()) {
+            if let Some(index) = self.format_header {
+                if self.format_version < STORAGE_FORMAT_VERSION {
+                    let raw = &self.lines[index];
+                    let (prefix, _) = raw.split_once("<!--").unwrap();
+                    let (_, suffix) = raw.split_once("-->").unwrap();
+                    let start: usize = self.lines[..index].iter().map(String::len).sum();
+                    contents.replace_range(
+                        start..start + raw.len(),
+                        &format!(
+                            "{prefix}<!-- kiroku-format: {STORAGE_FORMAT_VERSION} -->{suffix}"
+                        ),
+                    );
+                }
+            } else {
+                contents = format!(
+                    "<!-- kiroku-format: {STORAGE_FORMAT_VERSION} -->{}{}{contents}",
+                    self.newline, self.newline
+                );
+            }
         }
         contents
     }
@@ -738,7 +811,7 @@ impl Store {
             }
         }
         let path = self.dir.join(format!("{}.md", today.format("%Y-%m")));
-        let (mut document, source) = if let Some((mut previous, _)) = previous {
+        let (mut document, source) = if let Some((mut previous, index)) = previous {
             // Move To do entries, but keep Doing entries as daily history.
             // Remove in reverse so all other lines stay in place.
             let mut moved = false;
@@ -753,10 +826,11 @@ impl Store {
             if moved {
                 previous.reparse()?;
             }
+            let cleaned = previous.remove_empty_sections(index)?;
             if previous.path == path {
                 (previous, None)
             } else {
-                let source = moved.then_some(previous);
+                let source = (moved || cleaned).then_some(previous);
                 (Document::read_or_empty(path)?, source)
             }
         } else {
@@ -766,7 +840,7 @@ impl Store {
         let lines = titles
             .iter()
             .map(|title| format!("- {title}{}", document.newline));
-        let insertion = document.days[index].headings[Status::Todo.index()] + 1;
+        let insertion = document.days[index].headings[Status::Todo.index()].unwrap() + 1;
         document.lines.splice(insertion..insertion, lines);
         document.reparse()?;
         if let Some(source) = source {

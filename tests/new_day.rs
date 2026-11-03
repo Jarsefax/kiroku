@@ -220,6 +220,7 @@ fn same_month_rollover_moves_todos_copies_doing_and_preserves_comments_and_histo
         assert!(days[2].items.iter().all(|item| item.status == Status::Todo));
         let saved = fs::read_to_string(&path).unwrap();
         let expected_source = source
+            .replace(&format!("## To do{newline}"), "")
             .replacen(&format!("- duplicate{newline}"), "", 1)
             .replace(&format!("- möte 日本語{newline}"), "");
         assert!(saved.contains(&older));
@@ -271,8 +272,8 @@ fn cross_month_rollover_carries_only_the_latest_eligible_day_and_preserves_futur
     assert_eq!(
         saved_source,
         format!(
-            "<!-- kiroku-format: 1 -->\r\n\r\n{}",
-            source.replacen("- duplicate\r\n", "", 1)
+            "<!-- kiroku-format: 2 -->\r\n\r\n{}",
+            source.replacen("## To do\r\n- duplicate\r\n", "", 1)
         )
     );
     assert!(!saved_source.replace("\r\n", "").contains('\n'));
@@ -294,7 +295,7 @@ fn cross_month_rollover_carries_only_the_latest_eligible_day_and_preserves_futur
 }
 
 #[test]
-fn copying_doing_without_todos_preserves_source_bytes_within_and_across_months() {
+fn copying_doing_without_todos_preserves_history_and_notes_and_removes_the_empty_heading() {
     for previous in ["2026-10-01", "2026-09-30"] {
         for newline in ["\n", "\r\n"] {
             let temp = tempfile::tempdir().unwrap();
@@ -302,8 +303,7 @@ fn copying_doing_without_todos_preserves_source_bytes_within_and_across_months()
             let source_path = store
                 .dir
                 .join(format!("{}.md", date(previous).format("%Y-%m")));
-            // Leave this legacy file unversioned to verify it is not rewritten
-            // when only a different month needs saving.
+            // Closing a legacy day upgrades its file while retaining notes.
             let source = format!("# {previous}\n## To do\n<!-- pending note -->\n## Doing\n- duplicate  \n<!-- doing note -->\n- duplicate\n## Done\n- finished\n").replace('\n', newline);
             fs::write(&source_path, &source).unwrap();
 
@@ -330,13 +330,17 @@ fn copying_doing_without_todos_preserves_source_bytes_within_and_across_months()
                 [("duplicate", Status::Todo), ("duplicate", Status::Todo)]
             );
             let saved_source = fs::read_to_string(&source_path).unwrap();
+            let history = source.replace(&format!("## To do{newline}"), "");
+            assert!(saved_source.starts_with(&format!(
+                "<!-- kiroku-format: 2 -->{newline}{newline}{history}"
+            )));
             if previous == "2026-09-30" {
-                assert_eq!(saved_source, source);
-                assert!(!store.dir.join("backups").exists());
+                assert_eq!(
+                    saved_source,
+                    format!("<!-- kiroku-format: 2 -->{newline}{newline}{history}")
+                );
+                assert!(!store.dir.join("backups/2026-09.md.000001.bak").exists());
             } else {
-                assert!(saved_source.starts_with(&format!(
-                    "<!-- kiroku-format: 1 -->{newline}{newline}{source}"
-                )));
                 assert_eq!(
                     fs::read_to_string(store.dir.join("backups/2026-10.md.000001.bak")).unwrap(),
                     source

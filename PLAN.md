@@ -42,14 +42,15 @@ meeting" or "monthly op meeting - september".
   chronological log. Do not use separate files for To do, Doing, and Done.
 - Keep multiple days in each file, rather than creating a file for every day.
 - Use one Markdown log per calendar month, named `YYYY-MM.md`, from the
-  beginning. Each recorded day has a date heading, three status subheadings,
+  beginning. Each recorded day has a date heading, optional status subheadings,
   and one title per list item. No size threshold is needed initially.
 - Starting the first recorded day of a new month creates its file; editing
   the last started day continues to update its existing file.
 - Carry unfinished items across month/file boundaries using the same rules
   as within a file, preserving the source day's record.
 - Group items by day/date. Individual items have no timestamps.
-- Each day has three sections: To do, Doing, and Done.
+- Each day supports To do, Doing, and Done sections. Format 2 permits empty
+  sections to be omitted, including all headings on an empty day.
 - CLI output and the TUI omit empty status sections and their headings.
 - Dates in command output include the full weekday after the date.
 - Historical dates and weekdays use subdued cyan, with a darker green for
@@ -77,8 +78,11 @@ meeting" or "monthly op meeting - september".
 - Starting a subsequent day moves the previous recorded day's To do items and
   copies its Doing items into the new day's To do section, preserving order
   and duplicates. Keep Doing and Done entries on the previously active day
-  as daily history, retaining its headings and comments. Existing logs need
-  no migration; earlier removed Doing entries are not reconstructed.
+  as daily history. Remove empty section headings and their following blank
+  lines from the day being closed, preserving its date and all comments as
+  day notes. Leave other days alone; recreate missing sections on dated edits.
+  Existing logs need no bulk migration; earlier removed Doing entries are
+  not reconstructed.
 - The new day's Doing and Done sections start empty.
 - Recurring todos preserve configuration order and add no extra entry for
   an exact, case-sensitive title already carried forward or seeded by another
@@ -156,9 +160,9 @@ These defaults were adopted for the first implementation.
   If today's record already exists, leave it unchanged.
 - Rollover within a month updates both days in one save. Across months,
   prepare both files and backups, save and flush the destination first,
-  then remove source To do entries. Copying Doing alone leaves the source
-  file unchanged. Preserve recovery backups until both files are durable,
-  then apply the usual closed-month cleanup.
+  then remove source To do entries and empty headings. Leave the source file
+  unchanged if it needs neither removal nor cleanup. Preserve recovery
+  backups until both files are durable, then apply the usual closed-month cleanup.
 - `--date YYYY-MM-DD` targets title additions and item moves through `todo`,
   `doing`, and `done`, and copies through `repeat` or `list`/`search --repeat`.
   Numeric status moves select the active day's source item; `--from` selects
@@ -231,14 +235,15 @@ These defaults were adopted for the first implementation.
   newline convention. Reject malformed or unsupported content instead of
   overwriting it.
 - Dates must be unique and chronological within the correct monthly file.
-  Each day must have the three status headings in To do, Doing, Done order.
+  Present status headings must be unique and in To do, Doing, Done order.
   Titles are nonempty single-line text; Unicode and duplicate titles work.
-- Version the monthly Markdown format independently of app releases. Format 1
-  uses one `<!-- kiroku-format: 1 -->` header before the first date heading.
-  Validate unmarked legacy files as format 1 and annotate only on an actual
-  update, preserving original bytes in the usual backup. Reads and no-op
-  commands leave files unchanged. Reject unsupported formats and malformed,
-  duplicate, or misplaced version headers before using the file.
+- Version the monthly Markdown format independently of app releases. Format 2
+  uses one `<!-- kiroku-format: 2 -->` header before the first date heading
+  and allows omitted sections. Read format 1 with its original requirement
+  for all three headings; validate unmarked legacy files as format 1. Upgrade
+  to format 2 only on an actual update, preserving original bytes in the usual
+  backup. Reads and no-op commands leave files unchanged. Reject unsupported
+  formats and malformed, duplicate, or misplaced version headers before use.
 - Use atomic file replacement and serialize app writes with a directory lock.
   Reject stale TUI item selections after external edits and provide reload.
 - Before replacing an existing monthly file, save and flush its exact previous
@@ -261,7 +266,7 @@ These defaults were adopted for the first implementation.
 Example monthly file:
 
 ```markdown
-<!-- kiroku-format: 1 -->
+<!-- kiroku-format: 2 -->
 
 # 2026-10-06
 

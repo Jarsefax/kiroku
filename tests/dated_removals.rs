@@ -37,7 +37,7 @@ fn dated_removal_preserves_duplicate_occurrences_comments_and_other_months() {
     assert_eq!(
         fs::read_to_string(&source_path).unwrap(),
         format!(
-            "<!-- kiroku-format: 1 -->\r\n\r\n{}",
+            "<!-- kiroku-format: 2 -->\r\n\r\n{}",
             source.replace("## Doing\r\n- duplicate 日本語\r\n", "## Doing\r\n")
         )
     );

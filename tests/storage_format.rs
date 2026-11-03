@@ -5,15 +5,17 @@ use kiroku::{
 use std::fs;
 
 const LEGACY: &str = include_str!("fixtures/storage/legacy-v1.md");
-const HEADER: &str = "<!-- kiroku-format: 1 -->\n\n";
+const HEADER: &str = "<!-- kiroku-format: 2 -->\n\n";
 
 #[test]
 fn legacy_and_versioned_logs_preserve_bytes_until_an_actual_change() {
     for newline in ["\n", "\r\n"] {
         for header in [
             "",
+            "<!-- kiroku-format: 1 -->\n\n",
             HEADER,
             "\n<!-- notes -->\n  <!-- kiroku-format: 1 -->  \n",
+            "\n<!-- notes -->\n  <!-- kiroku-format: 2 -->  \n",
         ] {
             // Also exercise a manually edited file without a final newline.
             for final_newline in [true, false] {
@@ -69,7 +71,7 @@ fn legacy_and_versioned_logs_preserve_bytes_until_an_actual_change() {
                 let expected = if header.is_empty() {
                     format!("{}{expected}", HEADER.replace('\n', newline))
                 } else {
-                    expected
+                    expected.replacen("kiroku-format: 1", "kiroku-format: 2", 1)
                 };
                 assert_eq!(fs::read_to_string(&path).unwrap(), expected);
                 assert_eq!(
@@ -86,6 +88,29 @@ fn legacy_and_versioned_logs_preserve_bytes_until_an_actual_change() {
 }
 
 #[test]
+fn moving_an_item_to_its_current_position_does_not_upgrade_or_back_up_the_file() {
+    for header in ["", "<!-- kiroku-format: 1 -->\n", HEADER] {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let path = store.dir.join("2026-10.md");
+        let source = format!("{header}# 2026-10-02\n## To do\n- first\n## Doing\n## Done\n");
+        fs::write(&path, &source).unwrap();
+        store
+            .move_on_date_at(
+                parse_date("2026-10-02").unwrap(),
+                Some(parse_date("2026-10-02").unwrap()),
+                1,
+                Status::Todo,
+                None,
+                Some(1),
+            )
+            .unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap(), source);
+        assert!(!store.dir.join("backups").exists());
+    }
+}
+
+#[test]
 fn new_months_have_one_header_and_rollover_preserves_doing_done_and_older_history() {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::new(temp.path().to_path_buf());
@@ -94,9 +119,7 @@ fn new_months_have_one_header_and_rollover_preserves_doing_done_and_older_histor
     store.new_day(parse_date("2026-11-02").unwrap()).unwrap();
     let expected = format!(
         "{HEADER}{}",
-        LEGACY
-            .replace("- plan café 日本語\n", "")
-            .replacen("- duplicate\n", "", 1)
+        LEGACY.replace("## To do\n- plan café 日本語\n- duplicate\n\n", "")
     );
     assert_eq!(fs::read_to_string(&old).unwrap(), expected);
     let days = store.days(None).unwrap();
@@ -140,7 +163,7 @@ fn new_months_have_one_header_and_rollover_preserves_doing_done_and_older_histor
 fn unsupported_and_invalid_headers_block_reads_and_writes_without_backups() {
     for (text, expected_error) in [
         (
-            format!("<!-- kiroku-format: 2 -->\n{LEGACY}"),
+            format!("<!-- kiroku-format: 3 -->\n{LEGACY}"),
             "Upgrade Kiroku",
         ),
         // Version detection must run before attempting the current body grammar.
@@ -238,7 +261,7 @@ fn unsupported_historical_source_cannot_be_copied_into_a_supported_file() {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::new(temp.path().to_path_buf());
     let source = store.dir.join("2026-10.md");
-    let contents = format!("<!-- kiroku-format: 2 -->\n{LEGACY}");
+    let contents = format!("<!-- kiroku-format: 3 -->\n{LEGACY}");
     fs::write(&source, &contents).unwrap();
     let destination = store.dir.join("2026-11.md");
     let original = format!("{HEADER}# 2026-11-02\n\n## To do\n\n## Doing\n\n## Done\n");
@@ -265,7 +288,7 @@ fn unsupported_empty_eligible_month_cannot_be_skipped_to_find_an_older_active_da
     let legacy = LEGACY.replace("2026-10-", "2026-09-");
     fs::write(store.dir.join("2026-09.md"), &legacy).unwrap();
     let path = store.dir.join("2026-10.md");
-    fs::write(&path, "<!-- kiroku-format: 2 -->\n").unwrap();
+    fs::write(&path, "<!-- kiroku-format: 3 -->\n").unwrap();
     let error = store
         .change(Change::Add("new".into(), Status::Todo), None)
         .unwrap_err();
@@ -276,7 +299,7 @@ fn unsupported_empty_eligible_month_cannot_be_skipped_to_find_an_older_active_da
     );
     assert_eq!(
         fs::read_to_string(path).unwrap(),
-        "<!-- kiroku-format: 2 -->\n"
+        "<!-- kiroku-format: 3 -->\n"
     );
     assert!(!store.dir.join("backups").exists());
 }
