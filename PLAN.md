@@ -36,8 +36,8 @@ meeting" or "monthly op meeting - september".
   or absent from history. Apply configuration with `--data-dir` as well.
   Require a valid single-line title and at least one weekday before any write.
 - `new-day --skip-recurring` skips configured recurring additions for that
-  invocation while still moving all unfinished work. Preserve configuration,
-  validate it as usual, and leave already-started days unchanged.
+  invocation while still moving To do and copying Doing items. Preserve
+  configuration, validate it as usual, and leave already-started days unchanged.
 - Keep all three states together in a human-readable, manually editable
   chronological log. Do not use separate files for To do, Doing, and Done.
 - Keep multiple days in each file, rather than creating a file for every day.
@@ -74,10 +74,11 @@ meeting" or "monthly op meeting - september".
   `--from` together with `--date`. The TUI `m` prompt moves a selected item
   from any day to a chosen date and section. `new-day` always starts today.
 - The first day starts with matching recurring todos, or empty if none match.
-- Starting a subsequent day moves the previous recorded day's To do and
-  Doing items into the new day's To do section, preserving order and duplicates.
-  Remove their source entries so only Done items remain on the previously
-  active day, retaining its headings and comments.
+- Starting a subsequent day moves the previous recorded day's To do items and
+  copies its Doing items into the new day's To do section, preserving order
+  and duplicates. Keep Doing and Done entries on the previously active day
+  as daily history, retaining its headings and comments. Existing logs need
+  no migration; earlier removed Doing entries are not reconstructed.
 - The new day's Doing and Done sections start empty.
 - Recurring todos preserve configuration order and add no extra entry for
   an exact, case-sensitive title already carried forward or seeded by another
@@ -86,7 +87,7 @@ meeting" or "monthly op meeting - september".
   additions, explicit date operations, and skipped dates unchanged.
 - Move items from To do to Doing, then from Doing to Done.
 - Done items are not carried forward.
-- Preserve Done entries and all other earlier days during rollover.
+- Preserve Doing and Done entries and all other earlier days during rollover.
 - CLI commands select items by a number displayed in `krk list`, allowing
   duplicate titles to be selected separately (for example, `krk doing 3`).
 - Numbered commands support inclusive ranges, comma-separated selections,
@@ -146,17 +147,18 @@ These defaults were adopted for the first implementation.
   selected period has no records.
 - The TUI supports browsing days, navigating items, adding titles, and
   changing status with keyboard shortcuts.
-- If days are skipped, move unfinished items from the most recent recorded
+- If days are skipped, carry unfinished items from the most recent recorded
   day, without creating intervening files.
 - If today's record already exists, the new-day command leaves it intact
   and reports that the day has already been started.
 - `new-day` starts today only. It can insert today before existing future
-  records and moves unfinished work only from an earlier eligible day.
+  records and carries unfinished work only from an earlier eligible day.
   If today's record already exists, leave it unchanged.
 - Rollover within a month updates both days in one save. Across months,
   prepare both files and backups, save and flush the destination first,
-  then remove source entries. Preserve recovery backups until both files
-  are durable, then apply the usual closed-month cleanup.
+  then remove source To do entries. Copying Doing alone leaves the source
+  file unchanged. Preserve recovery backups until both files are durable,
+  then apply the usual closed-month cleanup.
 - `--date YYYY-MM-DD` targets title additions and item moves through `todo`,
   `doing`, and `done`, and copies through `repeat` or `list`/`search --repeat`.
   Numeric status moves select the active day's source item; `--from` selects
@@ -210,7 +212,7 @@ These defaults were adopted for the first implementation.
   selects matches; `f` cycles all/Done/To do/Doing, `/` refines the query,
   Enter opens the source day, `c` copies into active To do, and Esc returns
   to browsing. `n` starts today without losing the selected result, following
-  an unfinished item to the new day or retaining a Done item on its source day;
+  a To do item to the new day or retaining a Doing or Done item on its source day;
   `r` reloads results. Search copies retain stale-view protection.
 - TUI `c` copies the selected item from any day into active To do, jumps to
   the active day, and selects the copy. Reject stale source and destination

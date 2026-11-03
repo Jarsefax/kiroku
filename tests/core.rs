@@ -338,14 +338,14 @@ fn filtered_results_keep_source_references_and_combine_text_status_and_dates() {
     let filter = listing::Filter::new("  MeEtInG  ", Some(Status::Done)).unwrap();
     let view = listing::select_filtered(&store, None, date("2026-10-03"), &filter).unwrap();
     assert_eq!(view.days.len(), 3);
-    assert_eq!(view.days[0].items.len(), 2); // Unfinished entries have moved to the active day.
+    assert_eq!(view.days[0].items.len(), 3); // Doing stays in history; To do has moved forward.
     let text = listing::render_filtered(&view, date("2026-10-03"), &filter);
     assert!(text.contains("4 matching items"));
     assert!(text.contains("[1] Weekly meeting"));
     assert!(text.contains("[4] weekly meeting"));
     for (result, source_date, source_number) in [
-        (1, "2026-09-30", 1),
-        (2, "2026-09-30", 2),
+        (1, "2026-09-30", 2),
+        (2, "2026-09-30", 3),
         (3, "2026-10-01", 1),
         (4, "2026-10-02", 4),
     ] {
@@ -383,7 +383,7 @@ fn filtered_results_keep_source_references_and_combine_text_status_and_dates() {
             .unwrap()
             .days
             .len(),
-        1
+        2
     );
     assert_eq!(fs::read(store.dir.join("2026-10.md")).unwrap(), original);
     assert_eq!(
@@ -425,7 +425,7 @@ fn first_day_is_empty_and_starting_again_is_idempotent() {
 }
 
 #[test]
-fn friday_to_monday_moves_todo_and_doing_and_leaves_only_done_across_months() {
+fn friday_to_monday_moves_todo_copies_doing_and_preserves_doing_and_done_across_months() {
     let (_temp, store) = fixture();
     store.new_day(date("2026-07-31")).unwrap();
     for title in ["todo", "in progress", "finished"] {
@@ -444,9 +444,14 @@ fn friday_to_monday_moves_todo_and_doing_and_leaves_only_done_across_months() {
         ]
     );
     let friday = store.previous(date("2026-08-03")).unwrap().unwrap();
-    assert_eq!(friday.items.len(), 1);
-    assert_eq!(friday.items[0].title, "finished");
-    assert_eq!(friday.items[0].status, Status::Done);
+    assert_eq!(
+        friday
+            .items
+            .iter()
+            .map(|item| (item.title.as_str(), item.status))
+            .collect::<Vec<_>>(),
+        [("in progress", Status::Doing), ("finished", Status::Done)]
+    );
     assert_eq!(fs::read_dir(store.dir.join("backups")).unwrap().count(), 0);
     let monday = fs::read(store.dir.join("2026-08.md")).unwrap();
     store

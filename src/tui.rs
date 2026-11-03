@@ -174,12 +174,12 @@ impl App {
             let day = &self.days[day_index];
             let items = day.numbered();
             (Some(day.date) == self.active()).then(|| {
-                let done = items[item_index].status == Status::Done;
+                let moved = items[item_index].status == Status::Todo;
                 let index = items[..item_index]
                     .iter()
-                    .filter(|item| (item.status == Status::Done) == done)
+                    .filter(|item| (item.status == Status::Todo) == moved)
                     .count();
-                (if done { day.date } else { today }, index)
+                (if moved { today } else { day.date }, index)
             })
         });
         let created = self.store.new_day(today)?;
@@ -931,7 +931,7 @@ mod tests {
     }
 
     #[test]
-    fn new_day_key_adds_configured_todos_once_and_preserves_completed_history() {
+    fn new_day_key_adds_configured_todos_once_and_preserves_doing_and_done_history() {
         let temp = tempfile::tempdir().unwrap();
         let config_dir = temp.path().join("config");
         std::fs::create_dir_all(config_dir.join("kiroku")).unwrap();
@@ -977,8 +977,15 @@ days = ["{}"]
                 .all(|item| item.status == Status::Todo)
         );
         assert_eq!(
-            store.previous(today).unwrap().unwrap().items[0].status,
-            Status::Done
+            store
+                .previous(today)
+                .unwrap()
+                .unwrap()
+                .items
+                .iter()
+                .map(|item| item.status)
+                .collect::<Vec<_>>(),
+            [Status::Doing, Status::Done]
         );
         app.selected = 1;
         press(&mut app, KeyCode::Char('d'));
@@ -1374,7 +1381,7 @@ days = ["{}"]
         assert_eq!(app.search.as_ref().unwrap().results.len(), 4);
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Down);
-        assert_eq!(app.search.as_ref().unwrap().results[2], (0, 0));
+        assert_eq!(app.search.as_ref().unwrap().results[2], (0, 1));
         press(&mut app, KeyCode::Char('c'));
         assert!(app.search.is_none());
         assert!(app.editable());
@@ -1416,12 +1423,12 @@ days = ["{}"]
         store.new_day(today - chrono::Duration::days(1)).unwrap();
         let mut app = app(store.clone());
         search(&mut app, "matching");
-        press(&mut app, KeyCode::End);
+        press(&mut app, KeyCode::Down);
         assert_eq!(app.search.as_ref().unwrap().selected, 1);
         assert_eq!(app.search.as_ref().unwrap().results[1], (1, 1));
         press(&mut app, KeyCode::Char('n'));
         let search = app.search.as_ref().unwrap();
-        assert_eq!(search.results.len(), 2);
+        assert_eq!(search.results.len(), 3);
         assert_eq!(search.selected, 1);
         assert_eq!(search.results[search.selected], (2, 1));
         press(&mut app, KeyCode::Char('c'));
@@ -1430,11 +1437,13 @@ days = ["{}"]
         assert_eq!(active.items.len(), 3); // Two moved forward, one explicitly copied.
         assert_eq!(app.selected, 2);
         assert_eq!(active.numbered()[app.selected].title, "matching title");
-        assert!(
-            store.days(Some((source_date, source_date))).unwrap()[0]
-                .items
-                .is_empty()
-        );
+        let history = store
+            .days(Some((source_date, source_date)))
+            .unwrap()
+            .remove(0);
+        assert_eq!(history.items.len(), 1);
+        assert_eq!(history.items[0].title, "matching title");
+        assert_eq!(history.items[0].status, Status::Doing);
         assert!(store.previous(today).unwrap().unwrap().items.is_empty());
     }
 
@@ -1455,14 +1464,48 @@ days = ["{}"]
         press(&mut app, KeyCode::End);
         press(&mut app, KeyCode::Char('n'));
         let search = app.search.as_ref().unwrap();
-        assert_eq!(search.results.len(), 2);
-        assert_eq!(search.selected, 1);
+        assert_eq!(search.results.len(), 3);
+        assert_eq!(search.selected, 2);
         let (day_index, item_index) = search.results[search.selected];
         assert_eq!(app.days[day_index].date, yesterday);
         assert_eq!(
             app.days[day_index].numbered()[item_index].title,
             "matching done"
         );
+    }
+
+    #[test]
+    fn starting_today_keeps_a_selected_doing_search_result_with_or_without_a_filter() {
+        for status in [None, Some(Status::Doing)] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = Store::new(temp.path().to_path_buf());
+            let today = Local::now().date_naive();
+            let yesterday = today - chrono::Duration::days(1);
+            store
+                .add_on_date(yesterday, "matching todo", Status::Todo)
+                .unwrap();
+            for _ in 0..2 {
+                store
+                    .add_on_date(yesterday, "matching duplicate", Status::Doing)
+                    .unwrap();
+            }
+            let mut app = app(store.clone());
+            search(&mut app, "matching");
+            if let Some(status) = status {
+                app.search.as_mut().unwrap().filter.status = Some(status);
+                app.rebuild_search(None);
+            }
+            press(&mut app, KeyCode::End);
+            press(&mut app, KeyCode::Char('n'));
+            let search = app.search.as_ref().unwrap();
+            let (day_index, item_index) = search.results[search.selected];
+            assert_eq!(app.days[day_index].date, yesterday);
+            assert_eq!(item_index, 1); // The second Doing occurrence, after To do moved.
+            assert_eq!(
+                app.days[day_index].numbered()[item_index].status,
+                Status::Doing
+            );
+        }
     }
 
     #[test]
@@ -1496,7 +1539,7 @@ days = ["{}"]
         press(&mut app, KeyCode::Esc);
         assert!(app.search.is_none());
         search(&mut app, "");
-        assert_eq!(app.search.as_ref().unwrap().results.len(), 3);
+        assert_eq!(app.search.as_ref().unwrap().results.len(), 4);
         for status in [
             Some(Status::Done),
             Some(Status::Todo),
@@ -1512,7 +1555,7 @@ days = ["{}"]
         }
         press(&mut app, KeyCode::End);
         press(&mut app, KeyCode::Down);
-        assert_eq!(app.search.as_ref().unwrap().selected, 2);
+        assert_eq!(app.search.as_ref().unwrap().selected, 3);
         press(&mut app, KeyCode::Home);
         press(&mut app, KeyCode::Up);
         assert_eq!(app.search.as_ref().unwrap().selected, 0);
@@ -1529,7 +1572,7 @@ days = ["{}"]
         press(&mut app, KeyCode::Enter);
         assert!(app.search.is_none());
         assert_eq!(app.current, 0);
-        assert_eq!(app.selected, 0); // Original source index, not result position.
+        assert_eq!(app.selected, 1); // Original source index, not result position.
         search(&mut app, "absent");
         assert!(app.search.as_ref().unwrap().results.is_empty());
         press(&mut app, KeyCode::Char('c'));

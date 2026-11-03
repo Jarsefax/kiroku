@@ -739,18 +739,24 @@ impl Store {
         }
         let path = self.dir.join(format!("{}.md", today.format("%Y-%m")));
         let (mut document, source) = if let Some((mut previous, _)) = previous {
-            // Item lines are ordered by section and file position. Remove in
-            // reverse so comments, Done entries, and all other days stay in place.
-            for item in unfinished.iter().rev() {
+            // Move To do entries, but keep Doing entries as daily history.
+            // Remove in reverse so all other lines stay in place.
+            let mut moved = false;
+            for item in unfinished
+                .iter()
+                .rev()
+                .filter(|item| item.status == Status::Todo)
+            {
                 previous.lines.remove(item.line);
+                moved = true;
             }
-            if !unfinished.is_empty() {
+            if moved {
                 previous.reparse()?;
             }
             if previous.path == path {
                 (previous, None)
             } else {
-                let source = (!unfinished.is_empty()).then_some(previous);
+                let source = moved.then_some(previous);
                 (Document::read_or_empty(path)?, source)
             }
         } else {

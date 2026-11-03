@@ -1,6 +1,6 @@
 use kiroku::{
     config,
-    storage::{Status, Store, parse_date},
+    storage::{Change, Status, Store, parse_date},
 };
 use std::fs;
 
@@ -95,9 +95,14 @@ days = ["friday"]
             days.iter().map(|day| day.date).collect::<Vec<_>>(),
             [date(previous), date("2026-10-02"), date("2026-10-20")]
         );
-        assert_eq!(days[0].items.len(), 1);
-        assert_eq!(days[0].items[0].title, "foo");
-        assert_eq!(days[0].items[0].status, Status::Done);
+        assert_eq!(
+            days[0]
+                .items
+                .iter()
+                .map(|item| (item.title.as_str(), item.status))
+                .collect::<Vec<_>>(),
+            [("carry", Status::Doing), ("foo", Status::Done)]
+        );
         assert_eq!(
             days[1]
                 .items
@@ -145,8 +150,14 @@ days = ["monday"]
     }
     store.new_day(date("2026-10-05")).unwrap();
     let days = store.days(None).unwrap();
-    assert_eq!(days[0].items.len(), 1);
-    assert_eq!(days[0].items[0].status, Status::Done);
+    assert_eq!(
+        days[0]
+            .items
+            .iter()
+            .map(|item| item.status)
+            .collect::<Vec<_>>(),
+        [Status::Doing, Status::Done]
+    );
     assert_eq!(
         days[1]
             .items
@@ -172,7 +183,7 @@ fn recurrence_only_applies_when_new_day_creates_the_record() {
 }
 
 #[test]
-fn same_month_rollover_moves_duplicates_in_order_and_preserves_comments_and_done_bytes() {
+fn same_month_rollover_moves_todos_copies_doing_and_preserves_comments_and_history_bytes() {
     for newline in ["\n", "\r\n"] {
         let temp = tempfile::tempdir().unwrap();
         let store = Store::new(temp.path().to_path_buf());
@@ -190,8 +201,14 @@ fn same_month_rollover_moves_duplicates_in_order_and_preserves_comments_and_done
             ["2026-10-01", "2026-10-02", "2026-10-05"].map(date)
         );
         assert_eq!(days[0].items.len(), 2);
-        assert_eq!(days[1].items.len(), 1);
-        assert_eq!(days[1].items[0].status, Status::Done);
+        assert_eq!(
+            days[1]
+                .items
+                .iter()
+                .map(|item| item.status)
+                .collect::<Vec<_>>(),
+            [Status::Doing, Status::Done]
+        );
         assert_eq!(
             days[2]
                 .items
@@ -203,7 +220,7 @@ fn same_month_rollover_moves_duplicates_in_order_and_preserves_comments_and_done
         assert!(days[2].items.iter().all(|item| item.status == Status::Todo));
         let saved = fs::read_to_string(&path).unwrap();
         let expected_source = source
-            .replace(&format!("- duplicate{newline}"), "")
+            .replacen(&format!("- duplicate{newline}"), "", 1)
             .replace(&format!("- möte 日本語{newline}"), "");
         assert!(saved.contains(&older));
         assert!(saved.contains(&expected_source));
@@ -221,7 +238,7 @@ fn same_month_rollover_moves_duplicates_in_order_and_preserves_comments_and_done
 }
 
 #[test]
-fn cross_month_rollover_moves_only_the_latest_eligible_day_and_preserves_future_records() {
+fn cross_month_rollover_carries_only_the_latest_eligible_day_and_preserves_future_records() {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::new(temp.path().to_path_buf());
     let source_path = store.dir.join("2026-09.md");
@@ -234,9 +251,14 @@ fn cross_month_rollover_moves_only_the_latest_eligible_day_and_preserves_future_
     assert!(store.new_day(date("2026-10-02")).unwrap());
     let days = store.days(None).unwrap();
     assert_eq!(days.len(), 3);
-    assert_eq!(days[0].items.len(), 1);
-    assert_eq!(days[0].items[0].title, "finished");
-    assert_eq!(days[0].items[0].status, Status::Done);
+    assert_eq!(
+        days[0]
+            .items
+            .iter()
+            .map(|item| (item.title.as_str(), item.status))
+            .collect::<Vec<_>>(),
+        [("duplicate", Status::Doing), ("finished", Status::Done)]
+    );
     assert_eq!(days[1].items.len(), 2);
     assert!(
         days[1]
@@ -246,6 +268,13 @@ fn cross_month_rollover_moves_only_the_latest_eligible_day_and_preserves_future_
     );
     assert_eq!(days[2].items.len(), 3);
     let saved_source = fs::read_to_string(&source_path).unwrap();
+    assert_eq!(
+        saved_source,
+        format!(
+            "<!-- kiroku-format: 1 -->\r\n\r\n{}",
+            source.replacen("- duplicate\r\n", "", 1)
+        )
+    );
     assert!(!saved_source.replace("\r\n", "").contains('\n'));
     assert!(saved_source.contains("<!-- keep todo note -->\r\n"));
     assert!(
@@ -265,16 +294,121 @@ fn cross_month_rollover_moves_only_the_latest_eligible_day_and_preserves_future_
 }
 
 #[test]
+fn copying_doing_without_todos_preserves_source_bytes_within_and_across_months() {
+    for previous in ["2026-10-01", "2026-09-30"] {
+        for newline in ["\n", "\r\n"] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = Store::new(temp.path().to_path_buf());
+            let source_path = store
+                .dir
+                .join(format!("{}.md", date(previous).format("%Y-%m")));
+            // Leave this legacy file unversioned to verify it is not rewritten
+            // when only a different month needs saving.
+            let source = format!("# {previous}\n## To do\n<!-- pending note -->\n## Doing\n- duplicate  \n<!-- doing note -->\n- duplicate\n## Done\n- finished\n").replace('\n', newline);
+            fs::write(&source_path, &source).unwrap();
+
+            assert!(store.new_day(date("2026-10-02")).unwrap());
+            let days = store.days(None).unwrap();
+            assert_eq!(
+                days[0]
+                    .items
+                    .iter()
+                    .map(|item| (item.title.as_str(), item.status))
+                    .collect::<Vec<_>>(),
+                [
+                    ("duplicate", Status::Doing),
+                    ("duplicate", Status::Doing),
+                    ("finished", Status::Done)
+                ]
+            );
+            assert_eq!(
+                days[1]
+                    .items
+                    .iter()
+                    .map(|item| (item.title.as_str(), item.status))
+                    .collect::<Vec<_>>(),
+                [("duplicate", Status::Todo), ("duplicate", Status::Todo)]
+            );
+            let saved_source = fs::read_to_string(&source_path).unwrap();
+            if previous == "2026-09-30" {
+                assert_eq!(saved_source, source);
+                assert!(!store.dir.join("backups").exists());
+            } else {
+                assert!(saved_source.starts_with(&format!(
+                    "<!-- kiroku-format: 1 -->{newline}{newline}{source}"
+                )));
+                assert_eq!(
+                    fs::read_to_string(store.dir.join("backups/2026-10.md.000001.bak")).unwrap(),
+                    source
+                );
+            }
+            assert!(!store.new_day(date("2026-10-02")).unwrap());
+            assert_eq!(fs::read_to_string(source_path).unwrap(), saved_source);
+        }
+    }
+}
+
+#[test]
+fn doing_history_survives_later_completion_without_recopying_older_days() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::new(temp.path().to_path_buf());
+    store
+        .add_on_date(date("2026-09-30"), "pending", Status::Todo)
+        .unwrap();
+    store
+        .add_on_date(date("2026-09-30"), "ongoing", Status::Doing)
+        .unwrap();
+    store
+        .add_on_date(date("2026-09-30"), "finished", Status::Done)
+        .unwrap();
+
+    store.new_day(date("2026-10-01")).unwrap();
+    store.change(Change::Move(2, Status::Doing), None).unwrap();
+    store.new_day(date("2026-10-02")).unwrap();
+    store.change(Change::Move(2, Status::Done), None).unwrap();
+    store.new_day(date("2026-10-05")).unwrap();
+
+    let days = store.days(None).unwrap();
+    assert_eq!(days.len(), 4);
+    for day in &days[..2] {
+        assert!(
+            day.items
+                .iter()
+                .any(|item| item.title == "ongoing" && item.status == Status::Doing)
+        );
+        assert!(!day.items.iter().any(|item| item.status == Status::Todo));
+    }
+    assert_eq!(
+        days[2]
+            .items
+            .iter()
+            .map(|item| (item.title.as_str(), item.status))
+            .collect::<Vec<_>>(),
+        [("ongoing", Status::Done)]
+    );
+    assert_eq!(
+        days[3]
+            .items
+            .iter()
+            .map(|item| (item.title.as_str(), item.status))
+            .collect::<Vec<_>>(),
+        [("pending", Status::Todo)]
+    );
+}
+
+#[test]
 fn backup_failure_leaves_source_items_and_missing_today_unchanged() {
     for (source_date, today) in [("2026-10-01", "2026-10-02"), ("2026-09-30", "2026-10-02")] {
         let temp = tempfile::tempdir().unwrap();
         let store = configured_store(&temp, WEEKLY_TODOS);
-        store
-            .add_on_date(date(source_date), "unfinished", Status::Doing)
-            .unwrap();
         let path = store
             .dir
             .join(format!("{}.md", date(source_date).format("%Y-%m")));
+        fs::write(
+            &path,
+            format!("# {source_date}\n## To do\n- pending\n## Doing\n- unfinished\n## Done\n"),
+        )
+        .unwrap();
         let original = fs::read(&path).unwrap();
         fs::write(store.dir.join("backups"), "blocks backup creation").unwrap();
         assert!(store.new_day(date(today)).is_err());
@@ -289,7 +423,7 @@ fn backup_failure_leaves_source_items_and_missing_today_unchanged() {
 }
 
 #[test]
-fn concurrent_new_day_calls_move_items_once() {
+fn concurrent_new_day_calls_carry_items_once() {
     let temp = tempfile::tempdir().unwrap();
     let store = configured_store(&temp, WEEKLY_TODOS);
     store
@@ -313,8 +447,14 @@ fn concurrent_new_day_calls_move_items_once() {
         .count();
     assert_eq!(created, 1);
     let days = store.days(None).unwrap();
-    assert_eq!(days[0].items.len(), 1);
-    assert_eq!(days[0].items[0].status, Status::Done);
+    assert_eq!(
+        days[0]
+            .items
+            .iter()
+            .map(|item| (item.title.as_str(), item.status))
+            .collect::<Vec<_>>(),
+        [("doing", Status::Doing), ("done", Status::Done)]
+    );
     assert_eq!(days[1].items.len(), 3);
     assert_eq!(
         days[1]

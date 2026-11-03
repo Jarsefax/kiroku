@@ -499,11 +499,10 @@ fn future_dates_do_not_capture_default_additions_moves_copies_or_new_day() {
     success(logs, &["todo", "today addition"]);
     assert_eq!(store.active().unwrap().unwrap().date, today);
     assert_eq!(store.active().unwrap().unwrap().items.len(), 4);
-    assert!(
-        store.days(Some((yesterday, yesterday))).unwrap()[0]
-            .items
-            .is_empty()
-    );
+    let history = store.days(Some((yesterday, yesterday))).unwrap().remove(0);
+    assert_eq!(history.items.len(), 1);
+    assert_eq!(history.items[0].title, "earlier");
+    assert_eq!(history.items[0].status, Status::Doing);
     let future_day = store.days(Some((future, future))).unwrap().remove(0);
     assert_eq!(future_day.items.len(), 1);
     assert_eq!(future_day.items[0].title, "future plan");
@@ -511,7 +510,7 @@ fn future_dates_do_not_capture_default_additions_moves_copies_or_new_day() {
 }
 
 #[test]
-fn new_day_command_moves_unfinished_items_across_months_and_keeps_done_on_the_source_day() {
+fn new_day_command_moves_todos_copies_doing_and_keeps_doing_and_done_across_months() {
     let temp = tempfile::tempdir().unwrap();
     let logs = temp.path();
     let today = Local::now().date_naive();
@@ -526,8 +525,14 @@ fn new_day_command_moves_unfinished_items_across_months_and_keeps_done_on_the_so
     let days = store.days(None).unwrap();
     assert_eq!(days.len(), 2);
     assert_eq!(days[0].date, previous);
-    assert_eq!(days[0].items.len(), 1);
-    assert_eq!(days[0].items[0].status, Status::Done);
+    assert_eq!(
+        days[0]
+            .items
+            .iter()
+            .map(|item| item.status)
+            .collect::<Vec<_>>(),
+        [Status::Doing, Status::Done]
+    );
     assert_eq!(days[1].date, today);
     assert_eq!(days[1].items.len(), 2);
     assert!(
@@ -602,8 +607,14 @@ days = ["{other_weekday}"]
         };
         assert!(invoke(&["new-day"]).contains("day started"));
         let days = store.days(None).unwrap();
-        assert_eq!(days[0].items.len(), 1);
-        assert_eq!(days[0].items[0].status, Status::Done);
+        assert_eq!(
+            days[0]
+                .items
+                .iter()
+                .map(|item| item.status)
+                .collect::<Vec<_>>(),
+            [Status::Doing, Status::Done]
+        );
         assert_eq!(
             days[1]
                 .items
@@ -695,9 +706,14 @@ days = ["{weekday}"]
         assert!(day.items.iter().all(|item| item.status == Status::Todo));
         if previous_days.is_some() {
             let previous = store.previous(today).unwrap().unwrap();
-            assert_eq!(previous.items.len(), 1);
-            assert_eq!(previous.items[0].title, "daily meeting");
-            assert_eq!(previous.items[0].status, Status::Done);
+            assert_eq!(
+                previous
+                    .items
+                    .iter()
+                    .map(|item| (item.title.as_str(), item.status))
+                    .collect::<Vec<_>>(),
+                [("carry", Status::Doing), ("daily meeting", Status::Done)]
+            );
         }
         let path = logs.join(format!("{}.md", today.format("%Y-%m")));
         let original = fs::read(&path).unwrap();
@@ -1183,7 +1199,7 @@ fn searching_does_not_start_today_or_create_missing_directories() {
 #[test]
 fn repeat_option_copies_search_and_list_results_into_todo() {
     for (args, result, title) in [
-        (&["search", "meeting"][..], "2", "finished meeting"),
+        (&["search", "meeting"][..], "3", "finished meeting"),
         (
             &["search", "meeting", "--status", "done"][..],
             "2",
@@ -1192,12 +1208,12 @@ fn repeat_option_copies_search_and_list_results_into_todo() {
         (&["list", "--search", "meeting"][..], "1", "old meeting"),
         (
             &["list", "2026-10-01", "--search", "meeting"][..],
-            "1",
+            "2",
             "finished meeting",
         ),
         (
             &["list", "2026-09-29..2026-10-02"][..],
-            "2",
+            "3",
             "finished meeting",
         ),
         (&["list"][..], "3", "current meeting"),
