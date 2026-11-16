@@ -151,7 +151,12 @@ These defaults were adopted for the first implementation.
   order and show recorded days, including empty records. Report when the
   selected period has no records.
 - The TUI supports browsing days, navigating items, adding titles, and
-  changing status with keyboard shortcuts.
+  changing status with keyboard shortcuts. Up above the first item or Down
+  below the last item loads the previous/next recorded day into the same
+  chronological scrolling view. Keep loaded days visible, label each date,
+  show empty records as navigable placeholders, and skip unrecorded dates.
+  Left/Right jumps to a single-day view. Home/End selects the first/last item
+  of the selected day; editing follows that day and keeps existing restrictions.
 - If days are skipped, carry unfinished items from the most recent recorded
   day, without creating intervening records or files. Gaps in recorded dates
   are valid within and across monthly files.

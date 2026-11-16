@@ -484,10 +484,10 @@ in To do. The prompt displays the chosen position and defaults to appending.
 
 | Key | Action |
 | --- | --- |
-| ↑/↓ or `j`/`k` | Select an item |
+| ↑/↓ or `j`/`k` | Select an item; cross a day's first/last item to load the previous/next recorded day |
 | `K`/`J` (Shift-k/j) | Move the selected item up/down within its section |
-| ←/→ or `h`/`l` | Browse earlier/later recorded days |
-| Home/End or `g`/`G` | Select the first/last item |
+| ←/→ or `h`/`l` | Jump to an earlier/later recorded day in a single-day view |
+| Home/End or `g`/`G` | Select the first/last item of the selected day |
 | `a` | Add a todo |
 | `c` | Copy the selected item from any day into the active day's To do |
 | `m` | Move the selected item to a chosen date and section |
@@ -499,6 +499,17 @@ in To do. The prompt displays the chosen position and defaults to appending.
 | `r` | Reload manually edited files |
 | `?` | Show help |
 | `q` or Ctrl-C | Quit |
+
+The TUI opens on the active day. Press Up above its first item to add the
+previous recorded day above it, or Down below its last item to add the next
+recorded day below it, if one exists. Loaded days stay together in one
+scrolling view, oldest first, with date and section headings. Empty recorded
+days show “No items” and can be crossed with Up/Down; dates without records
+are skipped. Browsing never starts a day. Left/Right opens a single day again.
+The top heading follows the selected day, and editing shortcuts act on that
+day's selected item. Historical and future items retain their usual editing
+restrictions. Starting today, opening a search result, copying an item, or
+moving an item opens the destination in a single-day view.
 
 Reordering works in To do, Doing, and Done on the active day. It saves the
 order in the Markdown file and keeps the moved item selected. At the first
@@ -820,7 +831,7 @@ default configuration creation without overwriting existing files,
 date-targeted additions, moves, and copies with chronological insertion,
 CLI workflows, search/filter references and copying results into today,
 numbered search/list results with `--repeat` and `--remove`, repeating items across
-days/months, title suggestions, and TUI
+days/months, title suggestions, lazy multi-day TUI browsing, and TUI
 keyboard/render behavior. Save tests inject partial
 writes, file/directory flush failures, replacement failures, and backup
 cleanup failures, and verify the original or applied update survives as
