@@ -636,7 +636,7 @@ impl App {
                 },
                 search.filter.status.map_or("all statuses", Status::label),
                 self.active()
-                    .map_or_else(|| "none".into(), |date| date.to_string()),
+                    .map_or_else(|| "none".into(), listing::format_date),
                 if self.active().is_some_and(|date| date != today) {
                     " (not today)"
                 } else {
@@ -647,7 +647,7 @@ impl App {
             match self.day() {
                 Some(day) => format!(
                     "Kiroku  |  {}  |  {}{}",
-                    day.date,
+                    listing::format_date(day.date),
                     if self.editable() {
                         "active"
                     } else if day.date > today {
