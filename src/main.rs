@@ -101,14 +101,14 @@ struct ResultAction {
         long,
         requires = "repeat",
         value_name = "N",
-        help = "Insert the copy at this one-based position in To do (requires --repeat)"
+        help = "Insert the copy at this one-based position in its destination section (requires --repeat)"
     )]
     position: Option<std::num::NonZeroUsize>,
     #[arg(
         short,
         long,
         value_name = "RESULTS",
-        help = "Copy results into To do (for example 1-3,5); results are recomputed on this run"
+        help = "Copy results using --status (default: To do; for example 1-3,5); results are recomputed on this run"
     )]
     repeat: Option<Selection>,
     #[arg(
@@ -153,7 +153,7 @@ enum Command {
             short,
             long,
             value_enum,
-            help = "Show only this status; searches all history unless PERIOD is given"
+            help = "Show only this status and use it for copies with --repeat; searches all history unless PERIOD is given"
         )]
         status: Option<CliStatus>,
         #[command(flatten)]
@@ -169,7 +169,12 @@ enum Command {
             help = "today | yesterday | week | month | YYYY-MM-DD | FROM..TO"
         )]
         period: Option<String>,
-        #[arg(short, long, value_enum)]
+        #[arg(
+            short,
+            long,
+            value_enum,
+            help = "Show only this status and use it for copies with --repeat"
+        )]
         status: Option<CliStatus>,
         #[command(flatten)]
         action: ResultAction,
@@ -537,7 +542,9 @@ fn show_or_change(
         let day = store.repeat_results(
             action.date,
             &selected,
-            Status::Todo,
+            filter
+                .and_then(|filter| filter.status)
+                .unwrap_or(Status::Todo),
             active.as_ref(),
             action.position.map(|position| position.get()),
         )?;

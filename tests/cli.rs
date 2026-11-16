@@ -1274,7 +1274,67 @@ fn searching_does_not_start_today_or_create_missing_directories() {
 }
 
 #[test]
-fn repeat_option_copies_search_and_list_results_into_todo() {
+fn search_and_list_repeat_use_status_for_filter_and_destination() {
+    for command in ["search", "list"] {
+        for (status, expected) in [
+            ("todo", Status::Todo),
+            ("doing", Status::Doing),
+            ("done", Status::Done),
+        ] {
+            for destination in [None, Some("2026-09-30")] {
+                let temp = tempfile::tempdir().unwrap();
+                let logs = temp.path();
+                let store = Store::new(logs.to_path_buf());
+                for source_status in ["todo", "doing", "done"] {
+                    success(logs, &[source_status, &format!("arch {source_status}")]);
+                }
+                let original = store.active().unwrap().unwrap();
+                let mut args = if command == "search" {
+                    vec!["search", "arch"]
+                } else {
+                    vec!["list", "--search", "arch"]
+                };
+                args.extend(["--repeat", "1", "--status", status, "--position", "1"]);
+                if let Some(date) = destination {
+                    args.extend(["--date", date]);
+                }
+                success(logs, &args);
+                let date = destination
+                    .map(|date| parse_date(date).unwrap())
+                    .unwrap_or(original.date);
+                let day = store.days(Some((date, date))).unwrap().pop().unwrap();
+                let section = day
+                    .items
+                    .iter()
+                    .filter(|item| item.status == expected)
+                    .collect::<Vec<_>>();
+                assert_eq!(section[0].title, format!("arch {status}"));
+                assert_eq!(section.len(), if destination.is_some() { 1 } else { 2 });
+                if destination.is_some() {
+                    let active = store.active().unwrap().unwrap();
+                    assert_eq!(active.date, original.date);
+                    assert_eq!(
+                        active
+                            .items
+                            .iter()
+                            .map(|item| (&item.title, item.status))
+                            .collect::<Vec<_>>(),
+                        original
+                            .items
+                            .iter()
+                            .map(|item| (&item.title, item.status))
+                            .collect::<Vec<_>>()
+                    );
+                } else {
+                    assert_eq!(day.items.len(), original.items.len() + 1);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn repeat_option_copies_search_and_list_results_into_requested_status() {
     for (args, result, title) in [
         (&["search", "meeting"][..], "3", "finished meeting"),
         (
@@ -1338,10 +1398,15 @@ fn repeat_option_copies_search_and_list_results_into_todo() {
         };
         let history = historical(&store);
         let before = store.active().unwrap().unwrap();
-        let todo_count = before
-            .numbered()
+        let destination_status = if args.contains(&"--status") {
+            Status::Done
+        } else {
+            Status::Todo
+        };
+        let section_count = before
+            .items
             .iter()
-            .filter(|i| i.status == Status::Todo)
+            .filter(|i| i.status == destination_status)
             .count();
         let listing = success(logs, args);
         assert!(
@@ -1360,8 +1425,13 @@ fn repeat_option_copies_search_and_list_results_into_todo() {
         let after = store.active().unwrap().unwrap();
         assert_eq!(after.date, before.date);
         assert_eq!(after.items.len(), before.items.len() + 1);
-        assert_eq!(after.numbered()[todo_count].title, title);
-        assert_eq!(after.numbered()[todo_count].status, Status::Todo);
+        let copies = after
+            .items
+            .iter()
+            .filter(|i| i.status == destination_status)
+            .collect::<Vec<_>>();
+        assert_eq!(copies.len(), section_count + 1);
+        assert_eq!(copies[section_count].title, title);
         for original in &before.items {
             assert!(
                 after
@@ -1929,7 +1999,7 @@ fn position_option_inserts_additions_moves_and_copies_within_the_target_section(
             .filter(|i| i.status == Status::Todo)
             .map(|i| i.title.as_str())
             .collect::<Vec<_>>(),
-        ["first", "end", "middle", "first", "last"]
+        ["end", "first", "last"]
     );
     assert_eq!(
         day.items
@@ -1937,7 +2007,7 @@ fn position_option_inserts_additions_moves_and_copies_within_the_target_section(
             .filter(|i| i.status == Status::Doing)
             .map(|i| i.title.as_str())
             .collect::<Vec<_>>(),
-        ["first", "middle", "middle", "last", "end"]
+        ["first", "middle", "middle", "middle", "last", "end"]
     );
     assert_eq!(
         day.items
@@ -1945,7 +2015,7 @@ fn position_option_inserts_additions_moves_and_copies_within_the_target_section(
             .filter(|i| i.status == Status::Done)
             .map(|i| i.title.as_str())
             .collect::<Vec<_>>(),
-        ["first", "end", "middle", "last", "end"]
+        ["first", "first", "end", "middle", "last", "end"]
     );
 
     for command in ["todo", "doing", "done"] {
@@ -1997,7 +2067,16 @@ fn position_option_inserts_additions_moves_and_copies_within_the_target_section(
             .filter(|i| i.status == Status::Todo)
             .map(|i| i.title.as_str())
             .collect::<Vec<_>>(),
-        ["dated first", "dated first", "first", "dated last"]
+        ["dated first", "end", "dated last"]
+    );
+    assert_eq!(
+        dated
+            .items
+            .iter()
+            .filter(|item| item.status == Status::Done)
+            .map(|item| item.title.as_str())
+            .collect::<Vec<_>>(),
+        ["dated first", "dated first", "dated last"]
     );
 }
 

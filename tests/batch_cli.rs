@@ -227,14 +227,14 @@ fn result_removals_and_copies_span_months_and_keep_display_order() {
             "1",
         ],
     );
+    assert_eq!(titles(&store, "2026-10-02", Status::Todo), ["keep"]);
     assert_eq!(
-        titles(&store, "2026-10-02", Status::Todo),
-        ["historical", "finished", "keep"]
+        titles(&store, "2026-10-02", Status::Done),
+        ["historical", "finished", "finished"]
     );
-    assert_eq!(titles(&store, "2026-10-02", Status::Done), ["finished"]);
     let output = success(
         &store.dir,
-        &["search", "", "--status", "done", "--remove", "1-2"],
+        &["search", "", "--status", "done", "--remove", "1-4"],
     );
     assert!(output.contains("No matching items."));
 }

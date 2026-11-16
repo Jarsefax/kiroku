@@ -62,8 +62,8 @@ day. Use `krk new-day` to start subsequent days and carry unfinished work forwar
 | `krk search "text" [PERIOD]` | Search titles across all recorded days, or a selected period |
 | `krk list [PERIOD] --search "text"` | List matching titles; searches all history without PERIOD |
 | `krk list [PERIOD] --status STATUS` | List items with the selected status; searches all history without PERIOD |
-| `krk search "text" [PERIOD] --repeat RESULT_NUMBER` | Copy one search result into active To do |
-| `krk list [PERIOD] --repeat RESULT_NUMBER` | Copy one listed result into active To do; works with search/status filters |
+| `krk search "text" [PERIOD] --repeat RESULT_NUMBER` | Copy one search result into the active day; `--status` sets its status |
+| `krk list [PERIOD] --repeat RESULT_NUMBER` | Copy one listed result into the active day; works with search/status filters |
 | `krk list [PERIOD] --remove RESULT_NUMBER` | Remove one listed result from its recorded day; works with search/status filters |
 | `krk search "text" [PERIOD] --remove RESULT_NUMBER` | Remove one search result from its recorded day |
 | `krk doing NUMBER` | Move an active-day item into Doing |
@@ -407,10 +407,13 @@ krk list month --search "meeting" --repeat 2
 ```
 
 `--repeat` also works with an unfiltered `krk list`, or with a status filter.
-It copies exactly one result into the active day's To do (or the destination
-selected by `--date`), preserving the source entry and exact title, and prints
-the copied source and updated destination. `--status` on a search/list
-command still filters source items; the copy always starts in To do.
+It copies the selected results into the active day (or the destination selected
+by `--date`), preserving the source entries and exact titles, and prints the
+copied sources and updated destination. `--status` on a search/list command
+filters source items and sets the copies' destination status; without it,
+copies start in To do. For example, `krk search "arch" --repeat 1 --status done`
+copies the first matching Done result into Done. `--position` selects a position
+within that destination section.
 Invalid or missing result numbers make no
 changes. The separate `krk repeat` command uses an active-day item number
 or a date-scoped historical letter. These can differ from search or multi-day
