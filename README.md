@@ -508,8 +508,10 @@ days show “No items” and can be crossed with Up/Down; dates without records
 are skipped. Browsing never starts a day. Left/Right opens a single day again.
 The top heading follows the selected day, and editing shortcuts act on that
 day's selected item. Historical and future items retain their usual editing
-restrictions. Starting today, opening a search result, copying an item, or
-moving an item opens the destination in a single-day view.
+restrictions. Changes keep the loaded days in view, including copying or
+moving an item and starting today. The destination item is selected, extending
+the loaded date range when needed. Opening a search result opens its day in
+a single-day view.
 
 Reordering works in To do, Doing, and Done on the active day. It saves the
 order in the Markdown file and keeps the moved item selected. At the first

@@ -114,10 +114,20 @@ impl App {
     }
 
     fn show_day(&mut self, index: usize, selected: usize) {
-        self.current = index;
-        self.selected = selected;
+        self.select_day(index, selected);
         self.visible_days = index..(index + 1).min(self.days.len());
         self.list_state = ListState::default();
+    }
+
+    fn select_day(&mut self, index: usize, selected: usize) {
+        self.current = index;
+        self.selected = selected;
+        let end = (index + 1).min(self.days.len());
+        self.visible_days = if self.visible_days.is_empty() {
+            index..end
+        } else {
+            self.visible_days.start.min(index)..self.visible_days.end.max(end)
+        };
     }
 
     fn navigate_item(&mut self, direction: Direction) {
@@ -240,7 +250,7 @@ impl App {
         if created && rollover_selection.is_some() {
             self.rebuild_search(rollover_selection);
         }
-        self.show_day(self.active_index().unwrap_or(0), 0);
+        self.select_day(self.active_index().unwrap_or(0), 0);
         self.message = if created {
             "Started today with unfinished items and recurring todos."
         } else {
@@ -310,7 +320,7 @@ impl App {
         self.store.change(change, expected.as_ref())?;
         self.reload()?;
         if first_add {
-            self.show_day(self.active_index().unwrap_or(0), 0);
+            self.select_day(self.active_index().unwrap_or(0), 0);
         }
         self.message = "Saved. Item numbers may have changed.".into();
         Ok(())
@@ -351,7 +361,9 @@ impl App {
         let from = (source.date != active.date).then_some(source.date);
         self.store
             .repeat(from, number, Status::Todo, Some(&source), Some(&active))?;
-        self.search = None;
+        if self.search.take().is_some() {
+            self.list_state = ListState::default();
+        }
         self.reload()?;
         let active = self.active_index().unwrap();
         let selected = self.days[active]
@@ -360,7 +372,7 @@ impl App {
             .take_while(|item| item.status == Status::Todo)
             .count()
             .saturating_sub(1);
-        self.show_day(active, selected);
+        self.select_day(active, selected);
         self.message = "Copied to the active day's To do. Press s to start working.".into();
         Ok(())
     }
@@ -396,10 +408,12 @@ impl App {
                 .rposition(|item| item.status == status)
                 .unwrap()
         };
-        self.search = None;
+        if self.search.take().is_some() {
+            self.list_state = ListState::default();
+        }
         self.reload()?;
         let destination = self.days.iter().position(|day| day.date == date).unwrap();
-        self.show_day(destination, selected);
+        self.select_day(destination, selected);
         self.message = format!(
             "Moved to {date}, {}. Item numbers may have changed.",
             status.label()
@@ -1235,8 +1249,131 @@ mod tests {
             "historical done"
         );
         let copied = render(&mut app, 100, 24);
-        assert!(!copied.contains(&listing::format_date(previous)));
+        assert!(copied.contains(&listing::format_date(previous)));
         assert!(copied.contains("[1] historical done"));
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.day().unwrap().date, previous);
+        assert_eq!(
+            app.day().unwrap().numbered()[app.selected].title,
+            "historical done"
+        );
+    }
+
+    #[test]
+    fn moves_keep_loaded_days_when_selecting_existing_or_new_destination_dates() {
+        let today = Local::now().date_naive();
+        let previous = today - chrono::Duration::days(3);
+        for destination in [
+            previous,
+            today,
+            today - chrono::Duration::days(40),
+            today + chrono::Duration::days(35),
+        ] {
+            for from_search in [false, true] {
+                let temp = tempfile::tempdir().unwrap();
+                let store = Store::new(temp.path().to_path_buf());
+                store
+                    .add_on_date(previous, "move source", Status::Done)
+                    .unwrap();
+                store
+                    .add_on_date(today, "active work", Status::Todo)
+                    .unwrap();
+                let mut app = app(store.clone());
+                press(&mut app, KeyCode::Up);
+                if from_search {
+                    search(&mut app, "move source");
+                }
+                press(&mut app, KeyCode::Char('m'));
+                app.input = destination.to_string();
+                press(&mut app, KeyCode::Tab); // Done -> To do, including for a same-day move.
+                press(&mut app, KeyCode::Enter);
+                assert!(app.search.is_none());
+                assert_eq!(app.day().unwrap().date, destination);
+                assert_eq!(
+                    app.day().unwrap().numbered()[app.selected].title,
+                    "move source"
+                );
+                assert_eq!(
+                    app.day().unwrap().numbered()[app.selected].status,
+                    Status::Todo
+                );
+                let loaded = render(&mut app, 100, 32);
+                for date in [previous, today, destination] {
+                    assert!(loaded.contains(&listing::format_date(date)), "{loaded}");
+                }
+                assert!(loaded.contains("active work"));
+                if destination != previous {
+                    assert!(loaded.contains("No items."));
+                    assert!(
+                        store.days(Some((previous, previous))).unwrap()[0]
+                            .items
+                            .is_empty()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn starting_today_keeps_loaded_history_when_rollover_removes_a_day() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let today = Local::now().date_naive();
+        let oldest = today - chrono::Duration::days(35);
+        let yesterday = today - chrono::Duration::days(1);
+        store
+            .add_on_date(oldest, "historical work", Status::Done)
+            .unwrap();
+        store
+            .add_on_date(yesterday, "carry forward", Status::Todo)
+            .unwrap();
+        let mut app = app(store.clone());
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char('n'));
+        assert_eq!(app.day().unwrap().date, today);
+        assert_eq!(
+            app.day().unwrap().numbered()[app.selected].title,
+            "carry forward"
+        );
+        assert!(store.days(Some((yesterday, yesterday))).unwrap().is_empty());
+        let loaded = render(&mut app, 100, 24);
+        assert!(loaded.contains("historical work"));
+        assert!(loaded.contains("carry forward"));
+        assert!(!loaded.contains(&listing::format_date(yesterday)));
+        // Starting an already-started day must also retain the loaded history.
+        press(&mut app, KeyCode::Char('n'));
+        assert!(render(&mut app, 100, 24).contains("historical work"));
+    }
+
+    #[test]
+    fn copying_a_search_result_retains_the_loaded_browsing_days() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().to_path_buf());
+        let today = Local::now().date_naive();
+        let previous = today - chrono::Duration::days(35);
+        store
+            .add_on_date(previous, "historical match", Status::Done)
+            .unwrap();
+        store
+            .add_on_date(today, "active todo", Status::Todo)
+            .unwrap();
+        let mut app = app(store.clone());
+        press(&mut app, KeyCode::Up);
+        search(&mut app, "historical");
+        press(&mut app, KeyCode::Char('c'));
+        assert!(app.search.is_none());
+        assert_eq!(app.day().unwrap().date, today);
+        assert_eq!(
+            app.day().unwrap().numbered()[app.selected].title,
+            "historical match"
+        );
+        let loaded = render(&mut app, 100, 24);
+        assert!(loaded.contains(&listing::format_date(previous)));
+        assert!(loaded.contains("[A] historical match"));
+        assert!(loaded.contains("[2] historical match"));
+        press(&mut app, KeyCode::Char('s'));
+        assert!(render(&mut app, 100, 24).contains(&listing::format_date(previous)));
     }
 
     #[test]
@@ -1642,6 +1779,9 @@ days = ["{}"]
         );
         let days = store.days(None).unwrap();
         assert_eq!(days[1].items[0].title, "future plan");
+        let loaded = render(&mut app, 100, 24);
+        assert!(loaded.contains("today todo"));
+        assert!(loaded.contains("future plan"));
     }
 
     #[test]

@@ -157,6 +157,8 @@ These defaults were adopted for the first implementation.
   show empty records as navigable placeholders, and skip unrecorded dates.
   Left/Right jumps to a single-day view. Home/End selects the first/last item
   of the selected day; editing follows that day and keeps existing restrictions.
+  Preserve the loaded date range after changes, including copies, moves, and
+  starting today. Select the destination item and extend the range as needed.
 - If days are skipped, carry unfinished items from the most recent recorded
   day, without creating intervening records or files. Gaps in recorded dates
   are valid within and across monthly files.
