@@ -1334,6 +1334,40 @@ fn search_and_list_repeat_use_status_for_filter_and_destination() {
 }
 
 #[test]
+fn repeat_status_selects_the_copy_section_independently_of_the_search() {
+    for (query, expected_title) in [
+        (&["search", "ping"][..], "ping queued"),
+        (&["search", "ping", "--status", "done"], "ping finished"),
+        (&["list", "--status", "done"], "ping finished"),
+        (&["list"], "ping queued"),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let logs = temp.path();
+        success(logs, &["todo", "ping queued"]);
+        success(logs, &["done", "ping finished"]);
+
+        let mut args = query.to_vec();
+        args.extend(["--repeat", "1", "--repeat-status", "doing"]);
+        success(logs, &args);
+
+        let day = Store::new(logs.to_owned()).active().unwrap().unwrap();
+        let items: Vec<_> = day
+            .numbered()
+            .into_iter()
+            .map(|item| (item.title.as_str(), item.status))
+            .collect();
+        assert_eq!(
+            items,
+            [
+                ("ping queued", Status::Todo),
+                (expected_title, Status::Doing),
+                ("ping finished", Status::Done),
+            ]
+        );
+    }
+}
+
+#[test]
 fn repeat_option_copies_search_and_list_results_into_requested_status() {
     for (args, result, title) in [
         (&["search", "meeting"][..], "3", "finished meeting"),
@@ -1605,6 +1639,7 @@ fn invalid_remove_options_leave_logs_and_backups_unchanged() {
         &["list", "--remove", "1", "--repeat", "1"],
         &["list", "--remove", "1", "--date", "2026-09-30"],
         &["list", "--remove", "1", "--position", "1"],
+        &["list", "--remove", "1", "--repeat-status", "doing"],
         &[
             "list",
             "--remove",
@@ -1654,6 +1689,15 @@ fn invalid_repeat_option_does_not_write_or_repeat_all_matches() {
         &["search", "möte", "--repeat", "0"],
         &["search", "möte", "--repeat", "2"],
         &["search", "möte", "--repeat", "A"],
+        &["search", "möte", "--repeat-status", "doing"],
+        &[
+            "search",
+            "möte",
+            "--repeat",
+            "1",
+            "--repeat-status",
+            "unknown",
+        ],
         &[
             "search",
             "möte",

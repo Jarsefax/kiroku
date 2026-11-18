@@ -108,13 +108,21 @@ struct ResultAction {
         short,
         long,
         value_name = "RESULTS",
-        help = "Copy results using --status (default: To do; for example 1-3,5); results are recomputed on this run"
+        help = "Copy numbered results (for example 1-3,5) from this run"
     )]
     repeat: Option<Selection>,
     #[arg(
+        long,
+        requires = "repeat",
+        value_enum,
+        value_name = "STATUS",
+        help = "Copy into this section (requires --repeat, defaults to --status or To do)"
+    )]
+    repeat_status: Option<CliStatus>,
+    #[arg(
         short = 'x',
         long,
-        conflicts_with_all = ["repeat", "date", "position"],
+        conflicts_with_all = ["repeat", "repeat_status", "date", "position"],
         value_name = "RESULTS",
         help = "Remove results from their recorded days (for example 1-3,5); results are recomputed on this run"
     )]
@@ -153,7 +161,7 @@ enum Command {
             short,
             long,
             value_enum,
-            help = "Show only this status and use it for copies with --repeat; searches all history unless PERIOD is given"
+            help = "Show only items with this status across all history unless PERIOD is given"
         )]
         status: Option<CliStatus>,
         #[command(flatten)]
@@ -173,7 +181,7 @@ enum Command {
             short,
             long,
             value_enum,
-            help = "Show only this status and use it for copies with --repeat"
+            help = "Show only source items with this status"
         )]
         status: Option<CliStatus>,
         #[command(flatten)]
@@ -542,8 +550,10 @@ fn show_or_change(
         let day = store.repeat_results(
             action.date,
             &selected,
-            filter
-                .and_then(|filter| filter.status)
+            action
+                .repeat_status
+                .map(Status::from)
+                .or_else(|| filter.and_then(|filter| filter.status))
                 .unwrap_or(Status::Todo),
             active.as_ref(),
             action.position.map(|position| position.get()),

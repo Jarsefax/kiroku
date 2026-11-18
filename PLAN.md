@@ -207,8 +207,10 @@ These defaults were adopted for the first implementation.
   available to the separate `repeat` command.
 - CLI search and list rows also have bracketed result numbers across all
   displayed days. Appending `--repeat RESULT_NUMBER` to the same command
-  copies that result into active To do and prints the source and updated
-  day. Filters still select source items. Unfiltered lists support this
+  copies that result into the active day and prints the source and updated
+  day. Filters select source items. `--repeat-status` chooses the copy's
+  section, defaulting to the status filter if supplied or To do otherwise.
+  Unfiltered lists support this
   option without changing their default date selection. Invalid numbers
   make no changes; copying never starts a day. Results are recomputed on
   each run, so numbers can refer to different entries after log or date

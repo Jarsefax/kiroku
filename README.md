@@ -62,7 +62,7 @@ day. Use `krk new-day` to start subsequent days and carry unfinished work forwar
 | `krk search "text" [PERIOD]` | Search titles across all recorded days, or a selected period |
 | `krk list [PERIOD] --search "text"` | List matching titles; searches all history without PERIOD |
 | `krk list [PERIOD] --status STATUS` | List items with the selected status; searches all history without PERIOD |
-| `krk search "text" [PERIOD] --repeat RESULT_NUMBER` | Copy one search result into the active day; `--status` sets its status |
+| `krk search "text" [PERIOD] --repeat RESULT_NUMBER` | Copy one search result into the active day. Choose its section with `--repeat-status` |
 | `krk list [PERIOD] --repeat RESULT_NUMBER` | Copy one listed result into the active day; works with search/status filters |
 | `krk list [PERIOD] --remove RESULT_NUMBER` | Remove one listed result from its recorded day; works with search/status filters |
 | `krk search "text" [PERIOD] --remove RESULT_NUMBER` | Remove one search result from its recorded day |
@@ -162,6 +162,7 @@ after the command; other options apply to the commands that support them.
 | `--position` | `-p` |
 | `--date` | `-d` |
 | `--repeat` | `-r` |
+| `--repeat-status` | — |
 | `--remove` | `-x` |
 | `--from` | `-f` |
 | `--status` | `-s` |
@@ -409,11 +410,19 @@ krk list month --search "meeting" --repeat 2
 `--repeat` also works with an unfiltered `krk list`, or with a status filter.
 It copies the selected results into the active day (or the destination selected
 by `--date`), preserving the source entries and exact titles, and prints the
-copied sources and updated destination. `--status` on a search/list command
-filters source items and sets the copies' destination status; without it,
-copies start in To do. For example, `krk search "arch" --repeat 1 --status done`
-copies the first matching Done result into Done. `--position` selects a position
-within that destination section.
+copied sources and updated destination. On both commands, `--status` filters
+the source items. Use `--repeat-status todo|doing|done` to choose the section
+for the copies. If omitted, the copies use the status filter when supplied
+and otherwise go into To do. `--position` selects a position in that section.
+
+```sh
+# Copy the first match from any section into Doing.
+krk search "ping" --repeat 1 --repeat-status doing
+
+# Copy the first Done match into Doing.
+krk search "ping" --status done --repeat 1 --repeat-status doing
+```
+
 Invalid or missing result numbers make no
 changes. The separate `krk repeat` command uses an active-day item number
 or a date-scoped historical letter. These can differ from search or multi-day
